@@ -27,8 +27,8 @@ client = Anthropic()
 
 # Use cheap fast model for the agents (lots of tool calls, big rate-limit headroom)
 # Use Sonnet for synthesis only — it's the polished final output judges see.
-AGENT_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
-SYNTHESIS_MODEL = "claude-sonnet-4-6"
+AGENT_MODEL = "claude-haiku-4-5-20251001"
+SYNTHESIS_MODEL = os.environ.get("SYNTHESIS_MODEL", "claude-sonnet-4-6")
 MODEL = AGENT_MODEL  # backward compat
 
 # ---------------------------------------------------------------------------
@@ -307,32 +307,37 @@ def run_agent_with_role(system_prompt: str, user_prompt: str,
 # ---------------------------------------------------------------------------
 
 def generate_wiki(github_url: str) -> str:
-    """Orchestrates the three agents in sequence. Returns final synthesised Markdown."""
+    """Orchestrates the agents. Cartographer + Historian run in parallel, then Translator, then Synthesis."""
     global REPO_DIR
     REPO_DIR = clone_repo(github_url)
 
-    print("\n=== Cartographer mapping the architecture ===")
-    map_output = run_agent_with_role(
-        CARTOGRAPHER_PROMPT,
-        f"Map the architecture of the repo at {github_url}. Start by listing the root.",
-        max_turns=8,
-    )
+    from concurrent.futures import ThreadPoolExecutor
+
+    print("\n=== Cartographer + Historian running in parallel ===")
+
+    def run_cartographer():
+        return run_agent_with_role(
+            CARTOGRAPHER_PROMPT,
+            f"Map the architecture of the repo at {github_url}. Start by listing the root.",
+            max_turns=8,
+        )
+
+    def run_historian():
+        return run_agent_with_role(
+            HISTORIAN_PROMPT,
+            f"Read the git history of this repo and tell its story. "
+            f"Start by running git_log on the root to see the overall timeline.",
+            max_turns=6,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        cart_future = pool.submit(run_cartographer)
+        hist_future = pool.submit(run_historian)
+        map_output = cart_future.result()
+        history_output = hist_future.result()
+
     map_summary = map_output[-3000:] if len(map_output) > 3000 else map_output
-
-    print("\n⏸  Cooling 30s for rate limit window...")
-    time.sleep(30)
-
-    print("\n=== Historian reading the git history ===")
-    history_output = run_agent_with_role(
-        HISTORIAN_PROMPT,
-        f"Map summary:\n{map_summary}\n\nNow read the git history "
-        f"and tell the story of this codebase.",
-        max_turns=6,
-    )
     history_summary = history_output[-3000:] if len(history_output) > 3000 else history_output
-
-    print("\n⏸  Cooling 30s for rate limit window...")
-    time.sleep(30)
 
     print("\n=== Translator writing docs for three audiences ===")
     docs_output = run_agent_with_role(
@@ -342,9 +347,6 @@ def generate_wiki(github_url: str) -> str:
         max_turns=4,
     )
     docs_summary = docs_output[-4000:] if len(docs_output) > 4000 else docs_output
-
-    print("\n⏸  Cooling 30s for rate limit window...")
-    time.sleep(30)
 
     print("\n=== Synthesising into final wiki (Sonnet for polish) ===")
     final_md = run_agent_with_role(
