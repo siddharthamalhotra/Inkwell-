@@ -1,0 +1,369 @@
+"""
+Inkwell — living documentation for any codebase.
+
+Three specialist agents read the repo:
+  1. Cartographer — maps the architecture (which files do what, how they connect)
+  2. Historian   — reads git log to explain WHY each major piece exists
+  3. Translator  — turns it all into docs at three levels: pitch, onboarding, deep
+
+A Synthesis agent consolidates into a Markdown wiki.
+MongoDB Atlas stores the docs + embeddings; $rankFusion powers semantic search
+("where does auth happen?") over the generated wiki.
+"""
+
+import os
+import json
+import subprocess
+import tempfile
+from pathlib import Path
+from anthropic import Anthropic
+from dotenv import load_dotenv
+
+load_dotenv()
+
+client = Anthropic()
+MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+
+# ---------------------------------------------------------------------------
+# THREE SPECIALIST SYSTEM PROMPTS — this is where Inkwell's "wow" lives.
+# Each agent has the SAME tools but a different lens.
+# ---------------------------------------------------------------------------
+
+CARTOGRAPHER_PROMPT = """You are the Cartographer. You map codebases.
+
+Given a repo, you produce a structural map:
+  - Top-level architecture (entry points, core modules, peripheral concerns)
+  - The dependency shape (which modules import which — top-down)
+  - The "spine" of the app: the 3-5 files a new engineer must read to understand it
+
+Use list_files to scan, read_file to inspect. Don't read more than ~10 files —
+prioritise breadth over depth. You're drawing the map, not exploring every cave.
+
+Output a structured JSON map at the end:
+{
+  "architecture_summary": "2-3 sentences",
+  "entry_points": [{"path": "...", "why": "..."}],
+  "core_modules": [{"path": "...", "purpose": "..."}],
+  "spine": ["path1", "path2", "path3"]
+}"""
+
+HISTORIAN_PROMPT = """You are the Historian. You explain WHY code exists.
+
+Given a repo, you read git history to surface the story:
+  - When were the core modules introduced and by whom (broad strokes)?
+  - What was the original intent vs. what they became?
+  - What major refactors or pivots can you spot from commit messages?
+  - What's the "scar tissue" — code that exists because of past incidents?
+
+Use git_log to read history, read_file to verify current state. Look at the
+files the Cartographer marked as "spine" first.
+
+Output structured JSON at the end:
+{
+  "origin_story": "2-3 sentences about how this codebase started",
+  "key_moments": [{"approx_when": "...", "what": "...", "why_it_matters": "..."}],
+  "scar_tissue": [{"file": "...", "lesson": "..."}]
+}"""
+
+TRANSLATOR_PROMPT = """You are the Translator. You write docs for three audiences.
+
+Given the Cartographer's map and the Historian's narrative, you produce three docs:
+  1. The 30-second pitch (one paragraph — what does this codebase DO and for whom?)
+  2. The 5-minute onboarding (a new dev's first read — covers the spine, key concepts,
+     where to look for what, what NOT to touch yet)
+  3. The deep architectural read (for someone modifying core systems — covers why
+     decisions were made, scar tissue, gotchas, extension points)
+
+Read sparingly. You have the map and the history already; only fetch a file if
+you need to verify a specific claim or grab a code example.
+
+Output structured JSON at the end:
+{
+  "pitch": "...",
+  "onboarding_md": "full markdown, ~400 words with headings",
+  "deep_md": "full markdown, ~600 words with headings"
+}"""
+
+SYNTHESIS_PROMPT = """You combine three agent outputs into a single Markdown wiki.
+
+You receive: the Cartographer's map, the Historian's narrative, and the Translator's
+three-level docs. Produce a single beautiful README.md style document with these
+sections, in this order:
+  # <Repo Name>
+  ## TL;DR (the pitch)
+  ## Architecture (the map, formatted as a tree)
+  ## Onboarding Guide (the onboarding doc)
+  ## The Story (the history)
+  ## Deep Dive (the deep doc)
+  ## Where to Look For Things (a table mapping concerns -> files)
+
+Output ONLY the markdown. No JSON, no preamble."""
+
+
+# ---------------------------------------------------------------------------
+# Shared tools — all three agents use these
+# ---------------------------------------------------------------------------
+
+TOOLS = [
+    {
+        "name": "list_files",
+        "description": "List files in a directory of the cloned repo. Returns relative paths.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "subdir": {"type": "string", "description": "Subdirectory, '' for root"},
+                "max_depth": {"type": "integer", "default": 3},
+            },
+            "required": ["subdir"],
+        },
+    },
+    {
+        "name": "read_file",
+        "description": "Read a file's contents from the cloned repo.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Relative path within repo"},
+                "max_lines": {"type": "integer", "default": 300},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "git_log",
+        "description": "Get git log for the repo or a specific path. Returns commit messages + dates.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Specific file/dir, '' for whole repo"},
+                "limit": {"type": "integer", "default": 30},
+            },
+            "required": ["path"],
+        },
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# Tool implementations
+# ---------------------------------------------------------------------------
+
+# Set by clone_repo() before running agents — the local path to the cloned repo
+REPO_DIR: Path | None = None
+
+SKIP_DIRS = {"node_modules", ".git", "__pycache__", "dist", "build",
+             ".venv", "venv", ".next", "target", ".idea", ".vscode"}
+
+
+def clone_repo(github_url: str) -> Path:
+    """Shallow clone a public repo to a tempdir. Returns the path."""
+    global REPO_DIR
+    tmp = Path(tempfile.mkdtemp(prefix="inkwell_"))
+    print(f"  cloning {github_url} → {tmp}")
+    result = subprocess.run(
+        ["git", "clone", "--depth", "50", github_url, str(tmp)],
+        capture_output=True, text=True, timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"git clone failed: {result.stderr}")
+    REPO_DIR = tmp
+    return tmp
+
+
+def list_files(subdir: str, max_depth: int = 3) -> list[str]:
+    """Walk REPO_DIR/subdir, return relative paths up to max_depth, capped at 200."""
+    if REPO_DIR is None:
+        return ["[error] no repo cloned yet"]
+    base = REPO_DIR / subdir if subdir else REPO_DIR
+    if not base.exists():
+        return [f"[error] path does not exist: {subdir}"]
+
+    results = []
+    base_depth = len(base.parts)
+    for path in sorted(base.rglob("*")):
+        if not path.is_file():
+            continue
+        depth = len(path.parts) - base_depth
+        if depth > max_depth:
+            continue
+        if any(part in SKIP_DIRS for part in path.parts):
+            continue
+        results.append(str(path.relative_to(REPO_DIR)))
+        if len(results) >= 200:
+            results.append("... and more (showing first 200)")
+            break
+    return results
+
+
+def read_file(path: str, max_lines: int = 300) -> str:
+    """Read REPO_DIR/path, return first max_lines lines."""
+    if REPO_DIR is None:
+        return "[error] no repo cloned yet"
+    full = REPO_DIR / path
+    if not full.exists() or not full.is_file():
+        return f"[error] not a file: {path}"
+    try:
+        with open(full, "r", encoding="utf-8", errors="replace") as f:
+            lines = []
+            for i, line in enumerate(f):
+                if i >= max_lines:
+                    lines.append(f"... [truncated at {max_lines} lines]")
+                    break
+                lines.append(line.rstrip("\n"))
+        return "\n".join(lines)
+    except Exception as e:
+        return f"[error reading file] {e}"
+
+
+def git_log(path: str, limit: int = 30) -> list[dict]:
+    """Return git log for the repo or a specific path."""
+    if REPO_DIR is None:
+        return [{"error": "no repo cloned yet"}]
+    cmd = ["git", "log", f"-n{limit}", "--pretty=format:%h|%ai|%an|%s"]
+    if path:
+        cmd.extend(["--", path])
+    result = subprocess.run(cmd, cwd=REPO_DIR, capture_output=True, text=True)
+    if result.returncode != 0:
+        return [{"error": result.stderr}]
+    commits = []
+    for line in result.stdout.strip().split("\n"):
+        if not line:
+            continue
+        parts = line.split("|", 3)
+        if len(parts) == 4:
+            commits.append({
+                "hash": parts[0], "date": parts[1],
+                "author": parts[2], "message": parts[3],
+            })
+    return commits
+
+
+TOOL_DISPATCH = {
+    "list_files": list_files,
+    "read_file": read_file,
+    "git_log": git_log,
+}
+
+
+# ---------------------------------------------------------------------------
+# THE AGENT LOOP
+# ---------------------------------------------------------------------------
+
+def run_agent_with_role(system_prompt: str, user_prompt: str, max_turns: int = 15) -> str:
+    """Runs ONE specialist agent to completion. Returns its final text output."""
+    messages = [{"role": "user", "content": user_prompt}]
+
+    for turn in range(max_turns):
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=4096,
+            system=system_prompt,
+            tools=TOOLS,
+            messages=messages,
+        )
+
+        messages.append({"role": "assistant", "content": response.content})
+
+        if response.stop_reason == "end_turn":
+            return "".join(b.text for b in response.content if b.type == "text")
+
+        if response.stop_reason == "tool_use":
+            tool_results = []
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+                print(f"  → {block.name}({json.dumps(block.input)[:60]}...)")
+                func = TOOL_DISPATCH[block.name]
+                try:
+                    result = func(**block.input)
+                except Exception as e:
+                    result = {"error": str(e)}
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(result) if not isinstance(result, str) else result,
+                })
+            messages.append({"role": "user", "content": tool_results})
+            continue
+
+        return f"[unexpected stop: {response.stop_reason}]"
+
+    return "[hit max turns]"
+
+
+# ---------------------------------------------------------------------------
+# The orchestrator
+# ---------------------------------------------------------------------------
+
+def generate_wiki(github_url: str) -> str:
+    """Orchestrates the three agents in sequence. Returns final synthesised Markdown."""
+    global REPO_DIR
+    REPO_DIR = clone_repo(github_url)
+
+    print("\n=== Cartographer mapping the architecture ===")
+    map_output = run_agent_with_role(
+        CARTOGRAPHER_PROMPT,
+        f"Map the architecture of the repo at {github_url}. Start by listing the root."
+    )
+
+    print("\n=== Historian reading the git history ===")
+    history_output = run_agent_with_role(
+        HISTORIAN_PROMPT,
+        f"Use this map as a guide:\n{map_output}\n\nNow read the git history "
+        f"and tell the story of this codebase."
+    )
+
+    print("\n=== Translator writing docs for three audiences ===")
+    docs_output = run_agent_with_role(
+        TRANSLATOR_PROMPT,
+        f"MAP:\n{map_output}\n\nHISTORY:\n{history_output}\n\n"
+        f"Write the three-level docs."
+    )
+
+    print("\n=== Synthesising into final wiki ===")
+    final_md = run_agent_with_role(
+        SYNTHESIS_PROMPT,
+        f"MAP:\n{map_output}\n\nHISTORY:\n{history_output}\n\nDOCS:\n{docs_output}\n\n"
+        f"Produce the final wiki Markdown.",
+        max_turns=2,
+    )
+
+    return final_md
+
+
+# ---------------------------------------------------------------------------
+# MongoDB persistence — STUBS replaced by teammate's mongo_store.py at ~13:30
+# ---------------------------------------------------------------------------
+
+def save_doc(repo_url: str, section: str, text: str) -> None:
+    """Replaced by teammate's mongo_store.save_doc"""
+    pass
+
+
+def search_docs(repo_url: str, query: str, limit: int = 5) -> list[dict]:
+    """Replaced by teammate's mongo_store.search_docs"""
+    return [{"section": "[STUB]", "text": "no search yet"}]
+
+
+# ---------------------------------------------------------------------------
+# Smoke test — run `python3 agent.py` to verify the four tools work
+# ---------------------------------------------------------------------------
+
+if __name__ == "__main__":
+    repo_url = "https://github.com/tiangolo/fastapi-cli"
+
+    # Clone first
+    clone_repo(repo_url)
+
+    # Run just the Cartographer
+    print("\n=== Cartographer mapping the architecture ===\n")
+    output = run_agent_with_role(
+        CARTOGRAPHER_PROMPT,
+        f"Map the architecture of the repo at {repo_url}. "
+        f"Start by listing the root, then explore key files."
+    )
+
+    print("\n" + "="*60)
+    print("CARTOGRAPHER OUTPUT:")
+    print("="*60)
+    print(output)
