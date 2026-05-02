@@ -376,7 +376,11 @@ def search_docs(repo_url: str, query: str, limit: int = 5) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    repo_url = "https://github.com/illiaputintsev/plantsvszombies.git"
+    import sys
+    repo_url = (
+        sys.argv[1] if len(sys.argv) > 1
+        else os.environ.get("TARGET_REPO", "https://github.com/illiaputintsev/plantsvszombies.git")
+    )
 
     wiki = generate_wiki(repo_url)
 
