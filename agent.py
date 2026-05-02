@@ -259,7 +259,8 @@ TOOL_DISPATCH = {
 
 def run_agent_with_role(system_prompt: str, user_prompt: str,
                         max_turns: int = 15, model: str = None,
-                        max_tokens: int = 4096) -> str:
+                        max_tokens: int = 4096,
+                        progress_cb=None) -> str:
     """Runs ONE specialist agent to completion. Returns its final text output."""
     messages = [{"role": "user", "content": user_prompt}]
     use_model = model or AGENT_MODEL
@@ -276,6 +277,8 @@ def run_agent_with_role(system_prompt: str, user_prompt: str,
         messages.append({"role": "assistant", "content": response.content})
 
         if response.stop_reason == "end_turn":
+            if progress_cb:
+                progress_cb({"type": "agent_done"})
             return "".join(b.text for b in response.content if b.type == "text")
 
         if response.stop_reason == "tool_use":
@@ -283,6 +286,8 @@ def run_agent_with_role(system_prompt: str, user_prompt: str,
             for block in response.content:
                 if block.type != "tool_use":
                     continue
+                if progress_cb:
+                    progress_cb({"type": "tool", "tool": block.name, "input": block.input})
                 print(f"  → {block.name}({json.dumps(block.input)[:60]}...)")
                 func = TOOL_DISPATCH[block.name]
                 try:
@@ -306,20 +311,30 @@ def run_agent_with_role(system_prompt: str, user_prompt: str,
 # The orchestrator
 # ---------------------------------------------------------------------------
 
-def generate_wiki(github_url: str) -> str:
+def generate_wiki(github_url: str, progress_cb=None) -> str:
     """Orchestrates the agents. Cartographer + Historian run in parallel, then Translator, then Synthesis."""
     global REPO_DIR
     REPO_DIR = clone_repo(github_url)
 
     from concurrent.futures import ThreadPoolExecutor
 
+    def _cb(agent_name: str):
+        if not progress_cb:
+            return None
+        def cb(event: dict):
+            progress_cb({**event, "agent": agent_name})
+        return cb
+
     print("\n=== Cartographer + Historian running in parallel ===")
+    if progress_cb:
+        progress_cb({"type": "stage", "stage": "cartographer_historian"})
 
     def run_cartographer():
         return run_agent_with_role(
             CARTOGRAPHER_PROMPT,
             f"Map the architecture of the repo at {github_url}. Start by listing the root.",
             max_turns=8,
+            progress_cb=_cb("cartographer"),
         )
 
     def run_historian():
@@ -328,6 +343,7 @@ def generate_wiki(github_url: str) -> str:
             f"Read the git history of this repo and tell its story. "
             f"Start by running git_log on the root to see the overall timeline.",
             max_turns=6,
+            progress_cb=_cb("historian"),
         )
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -340,15 +356,20 @@ def generate_wiki(github_url: str) -> str:
     history_summary = history_output[-3000:] if len(history_output) > 3000 else history_output
 
     print("\n=== Translator writing docs for three audiences ===")
+    if progress_cb:
+        progress_cb({"type": "stage", "stage": "translator"})
     docs_output = run_agent_with_role(
         TRANSLATOR_PROMPT,
         f"MAP:\n{map_summary}\n\nHISTORY:\n{history_summary}\n\n"
         f"Write the three-level docs.",
         max_turns=4,
+        progress_cb=_cb("translator"),
     )
     docs_summary = docs_output[-4000:] if len(docs_output) > 4000 else docs_output
 
     print("\n=== Synthesising into final wiki (Sonnet for polish) ===")
+    if progress_cb:
+        progress_cb({"type": "stage", "stage": "synthesis"})
     final_md = run_agent_with_role(
         SYNTHESIS_PROMPT,
         f"MAP:\n{map_summary}\n\nHISTORY:\n{history_summary}\n\nDOCS:\n{docs_summary}\n\n"
@@ -356,6 +377,7 @@ def generate_wiki(github_url: str) -> str:
         max_turns=6,
         model=SYNTHESIS_MODEL,
         max_tokens=8192,
+        progress_cb=_cb("synthesis"),
     )
 
     return final_md
