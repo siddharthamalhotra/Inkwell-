@@ -1,219 +1,288 @@
-# Inkwell
-
-> **Living documentation for any GitHub codebase — automatically generated, semantically searchable, and never stale.**
-
----
+# StrongZombie
 
 ## TL;DR (the pitch)
 
-Inkwell is an AI-powered documentation engine that reads any GitHub repository and writes a complete, structured wiki — automatically, on every merge. Four specialist Claude agents each examine the codebase through a different lens: the **Cartographer** maps the architecture, the **Historian** explains *why* the code exists through git history, the **Translator** writes docs for three audiences (pitch, onboarding, deep dive), and the **Synthesis** agent weaves it all into a single polished Markdown wiki. The output is committed back to the repo as `output_wiki.md` and simultaneously stored in MongoDB Atlas with AWS Bedrock embeddings, enabling hybrid semantic search so you can ask *"where is auth handled?"* and get a precise, ranked answer — across every wiki version, forever.
+A fully-playable **Plants vs Zombies clone** built in Java/JavaFX by a team of four (Illia, Mario, Mark, and Pranay) over five weeks. You click to plant sun-generating flowers and pea-shooters on a 5 × 9 grid, collect suns to buy more plants, and fend off waves of walking zombies across 7 progressively harder levels. The codebase is intentionally small and flat — every `.java` file lives in the root directory, there are no packages, and the entire game loop fits inside a single `AnimationTimer`. A clean Entity → Plant/Zombie inheritance hierarchy means adding new unit types requires only a subclass and a constructor change.
 
 ---
 
 ## Architecture (the map)
 
 ```
-inkwell/
+StrongZombie/                    ← flat root; no packages
 │
-├── agent.py                        ← Orchestrator: runs 3 agents in parallel, synthesises output
-│   ├── CARTOGRAPHER_PROMPT         ← Lens 1: structural map of the target repo
-│   ├── HISTORIAN_PROMPT            ← Lens 2: git-history narrative and scar tissue
-│   ├── TRANSLATOR_PROMPT           ← Lens 3: three-level docs (pitch / onboard / deep)
-│   ├── SYNTHESIS_PROMPT            ← Final pass: merges all three into Markdown wiki
-│   ├── run_agent_with_role()       ← Agentic loop with tool use + multi-turn conversation
-│   ├── clone_repo()                ← Shallow git clone of target repo to tempdir
-│   └── TOOL_DISPATCH               ← list_files | read_file | git_log
+├── Main.java                    ← JavaFX entry point; wires Game + MenuUI to Stage
 │
-├── mongo_store.py                  ← Persistence + semantic search layer
-│   ├── _embed()                    ← AWS Bedrock Titan (amazon.titan-embed-text-v2:0)
-│   ├── save_doc()                  ← Inserts section text + embedding into MongoDB
-│   └── search_docs()               ← $rankFusion pipeline (70% vector / 30% full-text)
+├── ── MODEL ──────────────────────────────────────────────
+├── Game.java                    ← God-object: entity lists, game-loop update(),
+│                                   phase state machine, spawn logic, win/loss
+├── Board.java                   ← 5×9 Tile grid; placePlant / removePlant / isTileOccupied
+├── Tile.java                    ← Single cell; holds an optional Plant reference
 │
-├── .github/
-│   └── workflows/
-│       └── update-wiki.yml         ← CI trigger: runs on push to main, commits output_wiki.md
+├── Entity.java                  ← Abstract root: hp, maxHp, row/col, x/y,
+│                                   takeDamage(), takeHit(), alive flag
+│   ├── Plant.java               ← Abstract mid-tier: cost, cooldown, act()/draw() contract
+│   │   ├── Sunflower.java       ← Produces sun every 12 s; cost 50
+│   │   ├── Peashooter.java      ← Fires 1 pea/1.4 s; cost 100
+│   │   ├── Repeater.java        ← Fires 2 peas/shot; cost 200
+│   │   └── Walnut.java          ← High-HP blocker; cost 50
+│   │
+│   └── Zombie.java              ← Abstract mid-tier: move(), attack(), flash effect
+│       ├── BasicZombie.java     ← Standard speed/HP
+│       └── StrongZombie.java    ← 400 HP + cone sprite; added week 2
 │
-├── output_wiki.md                  ← Generated artifact (committed by workflow bot)
+├── Bullet.java                  ← Projectile data + movement
+├── Sun.java                     ← Collectible currency token; hover-to-collect
 │
-├── cleanup.py                      ← Dev utility: purge test docs from MongoDB by repo_url
-├── check_db.py                     ← Dev utility: inspect MongoDB collection contents
+├── ── UI / RENDERING ─────────────────────────────────────
+├── MenuUI.java                  ← Animated main menu; launches LevelUI or TutorialUI
+├── LevelUI.java                 ← Level-select screen; calls Game.startGame()
+├── TutorialUI.java              ← How-to-play screen
+├── GameUI.java                  ← AnimationTimer → Game.update(); Canvas draw; mouse input
 │
-├── test.py                         ← Smoke test: Anthropic API + MongoDB connectivity
-├── test_mongo.py                   ← Integration test: insert/search cycle for mongo_store.py
-├── office.html                     ← UI prototype for semantic search (Flask/fetch)
-└── requirements.txt                ← anthropic, pymongo, voyageai, flask, boto3, python-dotenv, rich
+├── ── AUDIO ───────────────────────────────────────────────
+├── SoundManager.java            ← Static singleton; loads & plays all 16 audio clips
+│
+└── sounds/                      ← WAV/MP3 assets (theme_menu, theme_level, peashoot,
+    │                               eating, hit, gameover, level_complete, …)
+    └── *.wav / *.mp3
 ```
 
-**Dependency flow:**
-
+**Data-flow spine:**
 ```
-update-wiki.yml
-    └── agent.py
-            ├── mongo_store.py
-            │       ├── pymongo  →  MongoDB Atlas
-            │       └── boto3    →  AWS Bedrock (embeddings)
-            └── anthropic SDK  →  Claude Haiku (agents) / Claude Sonnet (synthesis)
+Main → MenuUI → LevelUI → GameUI
+                              │
+                    AnimationTimer.handle()
+                              │
+                         Game.update(Δt)
+                         ├── Plant.act()  → Bullet list
+                         ├── Zombie.act() → move / attack
+                         ├── Bullet.move()
+                         ├── Sun spawning / collection
+                         └── Phase & win/loss check
 ```
 
 ---
 
 ## Onboarding Guide
 
-### What You're Looking At
+### Prerequisites
 
-Inkwell has one job: keep documentation in sync with code, automatically. When someone merges a PR, a GitHub Actions workflow wakes up, clones the target repo, runs four AI agents against it, and commits a fresh wiki back — all without a human touching anything.
-
-### The Three Files You Must Read First
-
-| File | Why |
+| Tool | Version |
 |---|---|
-| `agent.py` | The brain. Contains all four agent prompts and the orchestration loop. |
-| `mongo_store.py` | The memory. Handles embedding and hybrid search. |
-| `.github/workflows/update-wiki.yml` | The heartbeat. Defines when and how the system fires. |
+| JDK | 17+ |
+| JavaFX SDK | 17+ (must be on the module path) |
+| IDE | IntelliJ IDEA / VS Code with Java extension |
 
-### Key Concepts
-
-**Four agents, same tools, different lenses.** Every agent can call `list_files`, `read_file`, and `git_log` on the cloned target repo. What differs is the *system prompt* — the Cartographer is told to draw a map, the Historian is told to read history, the Translator is told to write for humans. Same toolbox, very different outputs.
-
-**Parallel execution, cheap model, expensive synthesis.** The three specialist agents run concurrently (Claude Haiku — fast and cheap). Only the final Synthesis pass uses Claude Sonnet, because that's the output people actually read.
-
-**Embeddings live in AWS Bedrock, docs live in MongoDB.** Each generated wiki section is embedded via Amazon Titan and stored as a document. The `search_docs()` function then does hybrid `$rankFusion` search scoped to a `repo_url`.
-
-### Running Locally
+### Running the game
 
 ```bash
-# 1. Install dependencies
-pip install -r requirements.txt
+# 1. Clone
+git clone https://github.com/illiaputintsev/plantsvszombies
+cd plantsvszombies
 
-# 2. Set up .env
-cp .env.example .env
-# Fill in: ANTHROPIC_API_KEY, MONGODB_URI, MONGODB_DB, MONGODB_COLLECTION,
-#           AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
+# 2. Compile (adjust --module-path to your JavaFX lib location)
+javac --module-path /path/to/javafx/lib \
+      --add-modules javafx.controls,javafx.media \
+      *.java
 
-# 3. Point at a repo and run
-TARGET_REPO=https://github.com/your-org/your-repo.git python agent.py
-# Output → output_wiki.md + MongoDB docs collection
-
-# 4. Test the search layer
-python test_mongo.py
-
-# 5. Clean up test documents
-python cleanup.py
+# 3. Run
+java --module-path /path/to/javafx/lib \
+     --add-modules javafx.controls,javafx.media \
+     Main
 ```
 
-### What NOT to Touch Yet
+> **Note:** The `sounds/` directory must be on the classpath root so `SoundManager` can resolve `/sounds/*.wav`. If you run from an IDE, mark the project root as a resources folder.
 
-- **The `$rankFusion` pipeline weights** in `mongo_store.py` — the 70/30 split is empirically tuned; changing it affects all search quality.
-- **The `TOOLS` list** in `agent.py` — adding tools affects every agent's token budget simultaneously.
-- **The `[skip ci]` tag** in the workflow's commit message — removing it causes an infinite loop of wiki regenerations.
+### Mental model in 5 minutes
 
-### Secrets Required (GitHub → Settings → Secrets)
+1. **`Main.java`** is three lines of real work: call `SoundManager.init()`, create `new Game()`, hand both to `new MenuUI(stage, game)`, call `ui.show()`. Everything else flows from those three objects.
 
-| Secret | Used By |
-|---|---|
-| `ANTHROPIC_API_KEY` | Claude API calls |
-| `MONGODB_URI` | Atlas connection string |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Bedrock embedding calls |
+2. **`Game`** is the single source of truth. It holds `List<Plant>`, `List<Zombie>`, `List<Bullet>`, `List<Sun>`, the sun balance, the current level, and the phase counter. Nothing mutates game state except `Game` itself (or entities via references `Game` passes them).
+
+3. **`GameUI`** owns the `AnimationTimer`. Every ~16 ms it calls `game.update(deltaTime)`, then redraws the `Canvas`. Mouse clicks are translated to grid coordinates and forwarded to `game.tryPlant(row, col)` or `game.tryRemovePlant(row, col)`.
+
+4. **Entities know how to draw themselves.** Each `Plant` and `Zombie` subclass holds a `draw(GraphicsContext gc)` method. `GameUI` iterates all live entities and calls `draw()` — it has no plant- or zombie-specific rendering code.
+
+5. **The shop** is a static array in `GameUI` (`SHOP_NAMES`, `SHOP_COSTS`). The selected index is stored on `Game` as `selectedPlant`. Clicking a grid cell while a plant is selected calls `Game.tryPlant()`, which checks `Board.isTileOccupied()` and the sun balance before placing.
+
+### Your first change: add a new plant
+
+1. Create `MyPlant.java` — `extends Plant`.
+2. Implement `act(List<Entity>, List<Bullet>, Game, double)` — shoot, heal, produce suns, whatever.
+3. Implement `draw(GraphicsContext)` — use the `gc` primitives; copy `Peashooter.draw()` as a template.
+4. In `GameUI.java`, add your plant's name to `SHOP_NAMES` and its cost to `SHOP_COSTS`.
+5. In `Game.java`, find `tryPlant()` — add a `case` for your new shop index that calls `new MyPlant(row, col)`.
+6. Done. Run the game; your plant appears in the shop.
+
+### Your first change: add a new zombie
+
+1. Create `MyZombie.java` — `extends Zombie`.
+2. Call `super(HP, row, col, speed)` in the constructor.
+3. Override `act(List<Plant>, List<Zombie>, double)` — almost always just `move()` then `attack()`.
+4. Override `draw(GraphicsContext)` — call `super.draw(gc)` first to get the base body + HP bar, then draw your distinguishing feature on top (see `StrongZombie.draw()` for a minimal example).
+5. In `Game.java`, add your zombie to the spawn logic inside `spawnZombie()`.
+
+### Key files to read in order
+
+| Order | File | What you learn |
+|---|---|---|
+| 1 | `Main.java` | Bootstrap wiring |
+| 2 | `Entity.java` | Root type; damage model |
+| 3 | `Plant.java` | `act()` / `draw()` contract |
+| 4 | `Sunflower.java` | Simplest concrete plant |
+| 5 | `Zombie.java` | Movement, blocking, flash |
+| 6 | `StrongZombie.java` | Minimal subclass example |
+| 7 | `Game.java` | Full game-loop brain |
+| 8 | `GameUI.java` | Rendering + input wiring |
 
 ---
 
 ## The Story
 
-### Origin (May 2, 2026 — 11:33 AM)
+### Phase 1 — Foundations (mid-March 2026)
 
-Siddhartha Malhotra landed the initial commit with the full vision already clear: three specialist agents, each with a different prompt but the same tools. The foundational insight was deceptively simple — *different lenses on the same codebase, not different codebases for different agents*. That single design decision shapes everything downstream.
+The project started with the expected scaffolding: `Entity`, `Plant`, `Zombie`, `Board`, and `Tile` were stood up in the first week. One notable early stumble: `Entity` briefly had `extends Game` — a circular dependency introduced during fast parallel development and patched the same day. It was an early signal that four people working in the same flat namespace would generate friction. The `maxHp` field was also added retroactively around 24 March once health bars were needed, confirming the base class was being designed as the team went.
 
-### The Collaboration Begins (1:42–2:00 PM)
+### Phase 2 — Core Gameplay (late March)
 
-Mario Cavicchioli merged partner code and introduced the local infrastructure — `mongo_store.py`, `cleanup.py`, `.gitignore`. What had been a solo orchestrator prototype started to grow a backbone. This is when "local experiment" began its transition toward "production system."
+The bulk of game logic — sun economy, the phase state machine inside `Game.update()`, wave spawning, and collision/bullet resolution — was written in one late-night mega-commit. All the magic numbers for balance (spawn intervals, wave zombie counts, sun drop rate, phase transition thresholds) were inlined at this point and never decomposed into named constants. The comment `SUN_DROP_INTERVAL = 15.0` is as close to documentation as these numbers get.
 
-### Going to Production (3:46 PM)
+### Phase 3 — StrongZombie and the proof of good design (week 2)
 
-The big wire-up: MongoDB Atlas, AWS Bedrock embeddings, and the hybrid `$rankFusion` search pipeline — all in a single commit. The 70/30 vector-to-text weighting wasn't academic; it reflects what actually worked for documentation search (semantic intent dominant, exact keyword recall supplementary). At this point, generated docs were persistent and queryable across time, not just ephemeral console output.
+A single commit titled *"Add levels, improve UI, add StrongZombie, add levels"* (the duplicated "add levels" hinting at a rushed message) brought in the cone-headed zombie. The implementation is clean: `StrongZombie` is 45 lines, overrides only `draw()` to paint an orange cone on top of the shared body, and passes `400` HP and a slightly reduced speed into `super()`. No behaviour was duplicated. The `Zombie` base class paid its design debt.
 
-### The Living Documentation Promise (3:52 PM)
+### Phase 4 — Audio bolted on
 
-Six minutes later: the GitHub Actions workflow. Every merge now triggers a fresh wiki. Docs are no longer something you write and forget — they regenerate themselves. This commit is arguably the philosophical centre of the whole project.
+`SoundManager` arrived as a late addition. Volume was adjusted at least three separate times in the git log. The `theme_level.wav` music was separately wired to stop when a level ended. Sound effects were originally firing inside `draw()` calls — meaning every frame (~60×/second) instead of once per event. This ran broken for roughly a week. Mark's `13:24` commit on the final day, *"Sounds moved from rendering to logic blocks"*, fixed it.
 
-### The Speed & Cost Crisis (4:22 PM)
+### The Final Day (2026-04-03) — 16+ commits in ~12 hours
 
-Running three full agents sequentially on every merge was too slow and too expensive. The response was pragmatic and fast: parallelize the specialist agents, strip out artificial sleeps, switch from Sonnet to Haiku for the reasoning-heavy-but-cheap agent work. Sonnet is preserved only for the final synthesis — the thing a human actually reads. This tiered model strategy became a core architectural principle.
+The entire polish layer landed under deadline pressure:
 
-### Scar Tissue
+| Time | Author | Commit |
+|---|---|---|
+| 02:57 | Mark | `Tutorial added + slight redesign` |
+| 03:15 | Mark | `Sun collecting sound` |
+| 10:36–11:02 | Mario | `Adding pause feature` → `Added pause logic and button to gameUI` |
+| 11:10 | Illia | `animated menu + house redesign` |
+| 12:04 | Mario | `Balanced zombies` |
+| 12:41 | Mark | `Fixed Inheritance issues` |
+| 13:00 | Mario | `Changed naming convention` |
+| 13:24 | Mark | **`Sounds moved from rendering to logic blocks`** ← critical fix |
+| 13:43 | Mario | `Accept remote GameUI.java` ← hottest merge conflict |
+| 14:23 | Illia | `Add zombies stack logic` |
+| 14:37 | Mark | `Add null check` ← audio crash patch |
+| 14:57–15:05 | Mario / Illia | Final Javadoc pass, PR merge |
 
-| Artefact | What Happened |
+A cosmetic bug — the in-game currency displaying as "dollars" instead of "suns" — survived the entire development cycle and was fixed at `00:52` on that same final day. Classic sign of a team eyes-down on functionality.
+
+### Scar Tissue Summary
+
+| File | Wound |
 |---|---|
-| `update-wiki.yml` — "Verify secrets are set" step | Early CI runs silently failed when secrets were absent. Now they explode loudly with character-count diagnostics. Never remove this step. |
-| Agent prompts — "make at most 5-6 tool calls" | Hit Claude's context window on large repos. Hard tool-call caps were added to every agent prompt after painful silent failures. |
-| Amazon Titan embeddings (not Anthropic native) | A pragmatic choice based on existing AWS infrastructure. Switching later means re-embedding the entire stored corpus — a breaking migration. |
+| `Entity.java` | `extends Game` circular dep (patched day-of); `maxHp` added retroactively |
+| `Game.java` | All balance constants are inline literals; phase machine is an implicit `int`; never decomposed |
+| `GameUI.java` | Sound-in-draw bug lived for ~1 week; most-contested file (multiple merge conflicts) |
+| `SoundManager.java` | Volume changed 3× across project; null-check added hours before submission |
+| `StrongZombie.java` | Rushed commit message; but the code itself is clean — testament to the `Zombie` base class |
 
 ---
 
 ## Deep Dive
 
-### The Agent Loop: How It Actually Works
+### The Entity Hierarchy — One Contract, Many Actors
 
-Each of the four agents runs inside `run_agent_with_role()` — a standard Claude multi-turn agentic loop. The agent receives its system prompt and a user message pointing at the target repo. It then interleaves `tool_use` (calling `list_files`, `read_file`, or `git_log`) with reasoning until it reaches `end_turn` and emits its structured JSON output. The three specialist agents run concurrently via Python threading or `asyncio` (parallelized in the May 2 speed commit). Their outputs are collected and fed as a single combined user message to the Synthesis agent, which produces the final Markdown using Claude Sonnet.
+```
+Entity          (hp, maxHp, row, col, x, y, alive, takeDamage, takeHit)
+├── Plant       (cost, cooldown, timer, act(), draw())
+│   ├── Sunflower   — economy; produces 25 sun every 12 s
+│   ├── Peashooter  — offense; 1 pea/1.4 s when zombie in row
+│   ├── Repeater    — offense; 2 peas/shot; cost 200
+│   └── Walnut      — defense; high HP tank, no attack
+└── Zombie      (speed, eating, eatTimer, attackInterval, flashTimer, move(), attack())
+    ├── BasicZombie  — standard stats
+    └── StrongZombie — 400 HP, slower (speed 22), cone hat
+```
 
-### Why Amazon Titan Embeddings?
+Every `Plant` implements `act(List<Entity>, List<Bullet>, Game, double)`. The `List<Entity>` parameter gives targeting plants (Peashooter, Repeater) access to live zombies without coupling to `Game`. `SoundManager` calls inside `act()` — never inside `draw()`.
 
-This was a **team infrastructure decision**, not a technical requirement. AWS Bedrock access was already provisioned; reusing it avoided a new vendor relationship and kept embeddings server-side (no data leaves the AWS boundary). The cost is lock-in: switching to Anthropic or Voyage embeddings later requires re-embedding every document already stored in MongoDB — a full corpus migration with no shortcut. If you're considering this, document the decision *before* you accumulate thousands of stored docs.
+Every `Zombie` implements `act(List<Plant>, List<Zombie>, double)`. The pattern is invariably:
+```java
+boolean moved = move(deltaTime, plants, allZombies);
+if (!moved) attack(deltaTime, plants);
+```
+The `Zombie` base class handles spacing (minimum 20 px gap between zombies in the same row) and the damage-flash white overlay — both features work for free on any subclass.
 
-### Hybrid Search: The 70/30 Split Explained
+---
 
-The `$rankFusion` pipeline in `mongo_store.py` combines two sub-pipelines:
+### Game.java — The God Object and Its Magic Numbers
 
-- **Vector search (70%):** Semantic similarity via Titan embeddings — finds docs about "authentication" even if the word "auth" never appears.
-- **Full-text search (30%):** Atlas Search — rewards exact keyword hits like `ANTHROPIC_API_KEY` or `$rankFusion`.
+`Game` is a **God Object by necessity, not ignorance**: for a five-week academic project with four parallel contributors, centralising all state in one class prevented merge conflicts more than it created them. Costs and cautions:
 
-Both pipelines filter by `repo_url`, so search is always scoped to a single repo's history. The 70/30 weight is tunable around line ~40 of `mongo_store.py`. Repos heavy on domain jargon or acronyms may benefit from shifting toward full-text.
+- **All wave/balance constants are inline literals** inside `update()` and the spawn methods. `spawnInterval`, wave zombie counts, sun drop rate (`SUN_DROP_INTERVAL = 15.0`), and phase transition thresholds are never named or documented elsewhere. A *"Balanced zombies"* commit landed on the **final day**, meaning these numbers were empirically tuned under deadline. Treat them as load-bearing; document before changing.
 
-### Token Budget: A Hard Lesson Baked into the Prompts
+- **The phase state machine** is an `int phase` plus a `double phaseTimer`. There is no `Phase` enum or transition table — you must read `update()` sequentially to understand the flow. Inserting a new phase requires updating **all** branching conditions on `phase` throughout the method.
 
-Every agent prompt contains explicit frugality instructions because the team hit Claude's context window on large repos — silently, with no error, just truncated output. The resulting constraints:
+- **Grid constants** (`ROWS`, `COLS`, `CELL_W`, `CELL_H`, `GRID_X`, `GRID_Y`) are `public static final` on `Game` and referenced directly from rendering code. Changing grid size is a multi-file operation.
 
-- Cartographer: *"Don't read more than ~10 files"*
-- Historian: *"Make at most 5-6 tool calls total"*
-- Translator: *"Only fetch a file if you need to verify a specific claim"*
-- Synthesis: explicit output size limit
+- **Level configuration** lives in a series of `if (level == N)` blocks inside `Game`. Copy the pattern of an existing level block when adding a new one.
 
-**If you add a new agent or expand tool access, test on a 2000+ file repo first.** Context exhaustion is silent and hard to debug after the fact.
+---
 
-### The Secrets Validation Step: Don't Delete It
+### GameUI — Sound Belongs in Logic, Not Rendering
 
-The `update-wiki.yml` step that prints secret character counts is pure scar tissue from early deployments. When `ANTHROPIC_API_KEY` or `MONGODB_URI` were absent, the workflow failed 3+ minutes into execution with a cryptic error. The validation step costs 2 seconds and surfaces the problem in the first 10 lines of CI output. It stays.
+The most-contested file in the repo. The critical historical lesson: **sound effects were originally fired inside `draw()` calls**, triggering ~60 times per second instead of once per event. This ran broken for roughly a week. The fix — moving audio calls into game-logic blocks — landed at `13:24` on the final day.
 
-### Extension Points
+**Consequence for future work:** if you refactor rendering, audit every `SoundManager` call. The architecture is now correct (sound in logic, not draw), but the pattern is fragile because `GameUI` still mixes three responsibilities in one class:
 
-**Adding a new specialist agent** (e.g., a "Security Auditor"):
-1. Write a new `*_PROMPT` constant in `agent.py`
-2. Add it to the `agents_and_prompts` dict
-3. The orchestrator will automatically parallelize it and pass its output to Synthesis
+| Responsibility | Where it lives now | Ideal future home |
+|---|---|---|
+| Canvas drawing | `GameUI` | `GameRenderer` |
+| Mouse input | `GameUI` | `GameInputHandler` |
+| Game loop timing | `GameUI` (AnimationTimer) | `GameLoop` |
 
-**Changing the output format** (HTML, Jupyter, etc.):
-1. Modify the Synthesis prompt to target your format
-2. Update the write path in `agent.py` (currently hardcoded to `output_wiki.md`)
-3. Update the `git add` line in the workflow
+That refactor is safe but non-trivial due to shared local variables.
 
-**Building a chat interface:**
-`search_docs(repo_url, query)` in `mongo_store.py` is the ready-made entry point. Wrap it in a Flask route and you have semantic search over all generated docs. See `office.html` for a prototype UI.
+---
 
-### The Automation Cost Model
+### SoundManager — Bolted On, Barely Stable
 
-Every merge to `main` costs approximately:
-- **~20 Claude API calls** (Haiku × 3 agents × 5–6 tool calls + Sonnet × 1 synthesis)
-- **~20 Bedrock embedding calls** (one per stored section)
-- **30–60 seconds** of wall-clock time (parallelized)
-- **Cents per run** at current pricing
+`SoundManager` was added in Phase 4. Volume was adjusted at least three times. A null-check was added hours before submission — implying a `NullPointerException` was observed in testing very close to the deadline. The check is a band-aid; the root cause (a media asset that may not load in all environments) was never resolved.
 
-The trade: constant low-grade cost per merge, zero ongoing maintenance burden, and a semantically searchable archive of every documentation state your codebase has ever been in.
+**Rules when touching audio:**
+1. Always null-check before calling any `SoundManager` method.
+2. Wrap new asset loading in a try-catch (the private `loadSound()` helper already does this — use it).
+3. Never call `SoundManager` from inside a `draw()` method.
 
-### Known Gotchas
+---
 
-1. **Binary files** (PDFs, ZIPs) — agents may attempt to `read_file` them and get garbled output. Add them to `.gitignore` or the `SKIP_DIRS` set in `agent.py`.
-2. **Large git histories** — `git_log` defaults to `--limit 30`. Repos with 50+ commits/day will present a misleading slice of history to the Historian. Consider increasing the limit or passing specific paths.
-3. **Private sub-repos** — the target repo must be reachable from the GitHub Actions runner. Add SSH deploy keys to the workflow for private dependencies.
-4. **MongoDB connection pooling** — `MongoClient` is module-level global in `mongo_store.py`. At current parallelism this is fine; if you scale to many concurrent runs, connection exhaustion becomes a risk.
+### The `Zombie` Base Class — The Architectural Success Story
+
+Lane movement, plant-blocking, zombie-spacing, eating/attack behaviour, and the hit-flash visual effect are all implemented **once** in `Zombie`. `StrongZombie` was added a week in as a single ~45-line commit and required only a constructor change (higher HP, slower speed, different hat drawn with `gc.fillPolygon`). Zero behaviour duplication. Any new zombie type should follow exactly the same pattern.
+
+---
+
+### Extension Points (Safe to Touch)
+
+| What to extend | How |
+|---|---|
+| New plant type | Subclass `Plant`, implement `act()` + `draw()`, register in `GameUI.SHOP_NAMES/COSTS` and `Game.tryPlant()` |
+| New zombie type | Subclass `Zombie`, override only what differs (HP, speed, sprite) in constructor + `draw()` |
+| New level | Add an `if (level == N)` configuration block in `Game`'s level-init logic; copy an existing block |
+| New screen | Create a UI class accepting `(Stage, Game)`, follow the `MenuUI` → `LevelUI` → `GameUI` handoff pattern |
+
+---
+
+### Known Fragility Hotspots
+
+| Area | Risk |
+|---|---|
+| `Game.update()` magic numbers | Silent balance breakage if changed without playtesting all 7 levels |
+| `SoundManager` null safety | Potential crash if audio assets are missing or slow to load |
+| Final-day polish code | Pause, animated menu, tutorial — added in 16+ commits in one day; lightly tested |
+| Flat file structure | No packages; any class name collision is a compile error; consider namespacing before the file count grows |
+| `phase` integer state machine | No enum; adding a phase requires reading all of `update()` carefully |
 
 ---
 
@@ -221,20 +290,28 @@ The trade: constant low-grade cost per merge, zero ongoing maintenance burden, a
 
 | Concern | File(s) |
 |---|---|
-| Agent prompts & personas | `agent.py` — `CARTOGRAPHER_PROMPT`, `HISTORIAN_PROMPT`, `TRANSLATOR_PROMPT`, `SYNTHESIS_PROMPT` |
-| Agent orchestration loop | `agent.py` — `run_agent_with_role()` |
-| Tool implementations (file/git access) | `agent.py` — `list_files()`, `read_file()`, `git_log()`, `TOOL_DISPATCH` |
-| Repo cloning | `agent.py` — `clone_repo()` |
-| Embedding generation | `mongo_store.py` — `_embed()` |
-| Storing a wiki section | `mongo_store.py` — `save_doc()` |
-| Semantic search over docs | `mongo_store.py` — `search_docs()` |
-| Hybrid search pipeline ($rankFusion) | `mongo_store.py` — aggregation pipeline in `search_docs()` |
-| CI/CD trigger & automation | `.github/workflows/update-wiki.yml` |
-| Secrets validation | `.github/workflows/update-wiki.yml` — "Verify secrets are set" step |
-| Generated wiki output | `output_wiki.md` (committed by workflow bot) |
-| Dev: purge test DB documents | `cleanup.py` |
-| Dev: inspect MongoDB contents | `check_db.py` |
-| API + DB smoke test | `test.py` |
-| Full mongo insert/search integration test | `test_mongo.py` |
-| Search UI prototype | `office.html` |
-| Python dependencies | `requirements.txt` |
+| App bootstrap & Stage wiring | `Main.java` |
+| Game loop (tick / delta time) | `GameUI.java` — `AnimationTimer` inside `launch()` |
+| All game state (entities, sun, score, level) | `Game.java` |
+| Phase / wave progression logic | `Game.java` → `update()` |
+| Wave balance & spawn timing constants | `Game.java` — inline literals in `update()` / spawn methods |
+| Win / loss detection | `Game.java` → `update()` |
+| Grid layout constants (ROWS, COLS, CELL sizes) | `Game.java` — `public static final` fields |
+| Tile occupancy / plant placement rules | `Board.java`, `Tile.java` |
+| Shared entity contract (HP, damage, alive) | `Entity.java` |
+| All plant behaviour contracts | `Plant.java` |
+| Sun production | `Sunflower.java` |
+| Single-pea shooting | `Peashooter.java` |
+| Double-pea shooting | `Repeater.java` |
+| High-HP blocking | `Walnut.java` |
+| All zombie behaviour contracts | `Zombie.java` |
+| Standard zombie | `BasicZombie.java` |
+| High-HP cone zombie | `StrongZombie.java` |
+| Projectile movement | `Bullet.java` |
+| Collectible sun tokens | `Sun.java` |
+| Canvas rendering & mouse input | `GameUI.java` |
+| Main menu (animated) | `MenuUI.java` |
+| Level select screen | `LevelUI.java` |
+| Tutorial screen | `TutorialUI.java` |
+| All audio playback | `SoundManager.java` |
+| Audio asset files | `sounds/*.wav`, `sounds/*.mp3` |
