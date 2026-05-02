@@ -13,6 +13,7 @@ MongoDB Atlas stores the docs + embeddings; $rankFusion powers semantic search
 
 import os
 import json
+import time
 import subprocess
 import tempfile
 from pathlib import Path
@@ -22,7 +23,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 client = Anthropic()
-MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+
+# Use cheap fast model for the agents (lots of tool calls, big rate-limit headroom)
+# Use Sonnet for synthesis only — it's the polished final output judges see.
+AGENT_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-haiku-4-5-20251001")
+SYNTHESIS_MODEL = "claude-sonnet-4-6"
+MODEL = AGENT_MODEL  # backward compat
 
 # ---------------------------------------------------------------------------
 # THREE SPECIALIST SYSTEM PROMPTS — this is where Inkwell's "wow" lives.
@@ -56,7 +62,8 @@ Given a repo, you read git history to surface the story:
   - What's the "scar tissue" — code that exists because of past incidents?
 
 Use git_log to read history, read_file to verify current state. Look at the
-files the Cartographer marked as "spine" first.
+files the Cartographer marked as "spine" first. Be efficient — make at most
+5-6 tool calls total.
 
 Output structured JSON at the end:
 {
@@ -75,7 +82,7 @@ Given the Cartographer's map and the Historian's narrative, you produce three do
      decisions were made, scar tissue, gotchas, extension points)
 
 Read sparingly. You have the map and the history already; only fetch a file if
-you need to verify a specific claim or grab a code example.
+you need to verify a specific claim or grab a code example. Make at most 3 tool calls.
 
 Output structured JSON at the end:
 {
@@ -249,13 +256,15 @@ TOOL_DISPATCH = {
 # THE AGENT LOOP
 # ---------------------------------------------------------------------------
 
-def run_agent_with_role(system_prompt: str, user_prompt: str, max_turns: int = 15) -> str:
+def run_agent_with_role(system_prompt: str, user_prompt: str,
+                        max_turns: int = 15, model: str = None) -> str:
     """Runs ONE specialist agent to completion. Returns its final text output."""
     messages = [{"role": "user", "content": user_prompt}]
+    use_model = model or AGENT_MODEL
 
     for turn in range(max_turns):
         response = client.messages.create(
-            model=MODEL,
+            model=use_model,
             max_tokens=4096,
             system=system_prompt,
             tools=TOOLS,
@@ -303,36 +312,52 @@ def generate_wiki(github_url: str) -> str:
     print("\n=== Cartographer mapping the architecture ===")
     map_output = run_agent_with_role(
         CARTOGRAPHER_PROMPT,
-        f"Map the architecture of the repo at {github_url}. Start by listing the root."
+        f"Map the architecture of the repo at {github_url}. Start by listing the root.",
+        max_turns=8,
     )
+    map_summary = map_output[-3000:] if len(map_output) > 3000 else map_output
+
+    print("\n⏸  Cooling 30s for rate limit window...")
+    time.sleep(30)
 
     print("\n=== Historian reading the git history ===")
     history_output = run_agent_with_role(
         HISTORIAN_PROMPT,
-        f"Use this map as a guide:\n{map_output}\n\nNow read the git history "
-        f"and tell the story of this codebase."
+        f"Map summary:\n{map_summary}\n\nNow read the git history "
+        f"and tell the story of this codebase.",
+        max_turns=6,
     )
+    history_summary = history_output[-3000:] if len(history_output) > 3000 else history_output
+
+    print("\n⏸  Cooling 30s for rate limit window...")
+    time.sleep(30)
 
     print("\n=== Translator writing docs for three audiences ===")
     docs_output = run_agent_with_role(
         TRANSLATOR_PROMPT,
-        f"MAP:\n{map_output}\n\nHISTORY:\n{history_output}\n\n"
-        f"Write the three-level docs."
+        f"MAP:\n{map_summary}\n\nHISTORY:\n{history_summary}\n\n"
+        f"Write the three-level docs.",
+        max_turns=4,
     )
+    docs_summary = docs_output[-4000:] if len(docs_output) > 4000 else docs_output
 
-    print("\n=== Synthesising into final wiki ===")
+    print("\n⏸  Cooling 30s for rate limit window...")
+    time.sleep(30)
+
+    print("\n=== Synthesising into final wiki (Sonnet for polish) ===")
     final_md = run_agent_with_role(
         SYNTHESIS_PROMPT,
-        f"MAP:\n{map_output}\n\nHISTORY:\n{history_output}\n\nDOCS:\n{docs_output}\n\n"
+        f"MAP:\n{map_summary}\n\nHISTORY:\n{history_summary}\n\nDOCS:\n{docs_summary}\n\n"
         f"Produce the final wiki Markdown.",
         max_turns=2,
+        model=SYNTHESIS_MODEL,
     )
 
     return final_md
 
 
 # ---------------------------------------------------------------------------
-# MongoDB persistence — STUBS replaced by teammate's mongo_store.py at ~13:30
+# MongoDB persistence — STUBS replaced by teammate's mongo_store.py
 # ---------------------------------------------------------------------------
 
 def save_doc(repo_url: str, section: str, text: str) -> None:
@@ -346,24 +371,19 @@ def search_docs(repo_url: str, query: str, limit: int = 5) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Smoke test — run `python3 agent.py` to verify the four tools work
+# Run all three agents end-to-end
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     repo_url = "https://github.com/tiangolo/fastapi-cli"
 
-    # Clone first
-    clone_repo(repo_url)
-
-    # Run just the Cartographer
-    print("\n=== Cartographer mapping the architecture ===\n")
-    output = run_agent_with_role(
-        CARTOGRAPHER_PROMPT,
-        f"Map the architecture of the repo at {repo_url}. "
-        f"Start by listing the root, then explore key files."
-    )
+    wiki = generate_wiki(repo_url)
 
     print("\n" + "="*60)
-    print("CARTOGRAPHER OUTPUT:")
+    print("FINAL WIKI:")
     print("="*60)
-    print(output)
+    print(wiki)
+
+    with open("output_wiki.md", "w") as f:
+        f.write(wiki)
+    print("\n💾 Saved to output_wiki.md")
