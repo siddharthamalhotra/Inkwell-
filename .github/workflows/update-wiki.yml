@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   regenerate-wiki:
     runs-on: ubuntu-latest
