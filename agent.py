@@ -19,6 +19,7 @@ import tempfile
 from pathlib import Path
 from anthropic import Anthropic
 from dotenv import load_dotenv
+from mongo_store import save_doc as mongo_save_doc, search_docs as mongo_search_docs
 
 load_dotenv()
 
@@ -257,7 +258,8 @@ TOOL_DISPATCH = {
 # ---------------------------------------------------------------------------
 
 def run_agent_with_role(system_prompt: str, user_prompt: str,
-                        max_turns: int = 15, model: str = None) -> str:
+                        max_turns: int = 15, model: str = None,
+                        max_tokens: int = 4096) -> str:
     """Runs ONE specialist agent to completion. Returns its final text output."""
     messages = [{"role": "user", "content": user_prompt}]
     use_model = model or AGENT_MODEL
@@ -265,7 +267,7 @@ def run_agent_with_role(system_prompt: str, user_prompt: str,
     for turn in range(max_turns):
         response = client.messages.create(
             model=use_model,
-            max_tokens=4096,
+            max_tokens=max_tokens,
             system=system_prompt,
             tools=TOOLS,
             messages=messages,
@@ -349,25 +351,24 @@ def generate_wiki(github_url: str) -> str:
         SYNTHESIS_PROMPT,
         f"MAP:\n{map_summary}\n\nHISTORY:\n{history_summary}\n\nDOCS:\n{docs_summary}\n\n"
         f"Produce the final wiki Markdown.",
-        max_turns=2,
+        max_turns=6,
         model=SYNTHESIS_MODEL,
+        max_tokens=8192,
     )
 
     return final_md
 
 
 # ---------------------------------------------------------------------------
-# MongoDB persistence — STUBS replaced by teammate's mongo_store.py
+# MongoDB persistence — wired to mongo_store.py
 # ---------------------------------------------------------------------------
 
 def save_doc(repo_url: str, section: str, text: str) -> None:
-    """Replaced by teammate's mongo_store.save_doc"""
-    pass
+    mongo_save_doc(repo_url, section, text)
 
 
 def search_docs(repo_url: str, query: str, limit: int = 5) -> list[dict]:
-    """Replaced by teammate's mongo_store.search_docs"""
-    return [{"section": "[STUB]", "text": "no search yet"}]
+    return mongo_search_docs(repo_url, query, limit)
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +376,7 @@ def search_docs(repo_url: str, query: str, limit: int = 5) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    repo_url = "https://github.com/tiangolo/fastapi-cli"
+    repo_url = "https://github.com/illiaputintsev/plantsvszombies.git"
 
     wiki = generate_wiki(repo_url)
 
@@ -384,6 +385,17 @@ if __name__ == "__main__":
     print("="*60)
     print(wiki)
 
-    with open("output_wiki.md", "w") as f:
+    with open("output_wiki.md", "w", encoding="utf-8") as f:
         f.write(wiki)
-    print("\n💾 Saved to output_wiki.md")
+    print("\nSaved to output_wiki.md")
+
+    print("\nSaving wiki sections to MongoDB...")
+    import re
+    sections = re.split(r'\n(?=## )', wiki)
+    for section in sections:
+        heading = section.split('\n', 1)[0].strip('# ').strip()
+        if not heading:
+            heading = "Introduction"
+        save_doc(repo_url, heading, section.strip())
+        print(f"  saved: {heading}")
+    print("Done — searchable via mongo_store.search_docs()")
