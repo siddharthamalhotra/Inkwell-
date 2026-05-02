@@ -1,0 +1,2120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Metaverse Office — Prep Scene</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+    background: #0a0a0f;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #e8e8e8;
+  }
+  #renderCanvas {
+    width: 100%;
+    height: 100%;
+    touch-action: none;
+    outline: none;
+  }
+  /* HTML overlay — these are stubs, wired to nothing for now */
+  #overlay {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 10;
+    pointer-events: none;
+  }
+  #overlay > * { pointer-events: auto; }
+  .panel {
+    background: rgba(15, 15, 22, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    backdrop-filter: blur(6px);
+    font-size: 13px;
+    max-width: 320px;
+  }
+  .panel h2 {
+    margin: 0 0 6px 0;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #888;
+  }
+  #taskInput {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #e8e8e8;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 13px;
+    box-sizing: border-box;
+  }
+  .btn {
+    background: #2a5fb8;
+    border: none;
+    color: white;
+    padding: 8px 14px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    margin-right: 6px;
+    margin-top: 8px;
+  }
+  .btn:hover { background: #3470d4; }
+  .btn.secondary { background: #444; }
+  .btn.secondary:hover { background: #555; }
+  #help {
+    position: absolute;
+    bottom: 16px;
+    left: 16px;
+    z-index: 10;
+    font-size: 12px;
+    color: #888;
+    background: rgba(15, 15, 22, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 10px 12px;
+    backdrop-filter: blur(6px);
+  }
+  #help kbd {
+    background: #333;
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-family: monospace;
+    margin: 0 2px;
+  }
+  #topRight {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  #status {
+    font-size: 11px;
+    color: #6a7;
+    background: rgba(15, 15, 22, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 6px 10px;
+    backdrop-filter: blur(6px);
+    letter-spacing: 0.05em;
+  }
+  #btnView kbd {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-family: monospace;
+    margin-left: 6px;
+  }
+
+  /* ============================================================
+     MEETING TRANSCRIPT PANEL
+     ============================================================
+     Slides in from the right when a meeting starts. Each agent
+     gets a "card" with their accent color as a left border so
+     judges can see at a glance who's speaking.
+
+     Visibility is controlled by adding/removing .visible on
+     #transcriptPanel. CSS transition handles the slide animation.
+  */
+  #transcriptPanel {
+    display: none !important;
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 380px;
+    max-height: calc(100vh - 32px);
+    z-index: 20;
+    background: rgba(15, 15, 22, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    backdrop-filter: blur(10px);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    /* Hidden by default — slid off-screen to the right */
+    transform: translateX(calc(100% + 32px));
+    opacity: 0;
+    transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.25s;
+    pointer-events: none;
+  }
+  #transcriptPanel.visible {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  #transcriptPanel.visible ~ #topRight {
+    /* When the panel's open, push the top-right buttons down to
+       avoid overlap. Done with a sibling selector since we don't
+       want JS managing this. */
+    margin-top: 0;
+  }
+  #transcriptHeader {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding-bottom: 8px;
+  }
+  #transcriptTitle {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: #c4c8d0;
+  }
+  #transcriptClose {
+    background: transparent;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 18px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  #transcriptClose:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: white;
+  }
+  #transcriptScroll {
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    /* Lets the scrollable area take whatever room remains. */
+    flex: 1;
+    min-height: 0;
+    /* Custom scrollbar to match the dark theme */
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+  }
+  #transcriptScroll::-webkit-scrollbar { width: 6px; }
+  #transcriptScroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+  }
+  /* A single agent's presentation card */
+  .presentation-card {
+    background: rgba(255, 255, 255, 0.03);
+    border-left: 3px solid var(--agent-color, #888);
+    border-radius: 6px;
+    padding: 10px 12px;
+    /* Fade-in animation when added */
+    animation: cardSlide 0.3s ease-out;
+  }
+  @keyframes cardSlide {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .presentation-card .agent-name {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--agent-color, #ccc);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  /* The "currently speaking" pulse dot */
+  .presentation-card.speaking .agent-name::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--agent-color, #ccc);
+    animation: pulse 1.2s ease-in-out infinite;
+    box-shadow: 0 0 8px var(--agent-color, #ccc);
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.5; transform: scale(0.85); }
+  }
+  .presentation-card .agent-text {
+    font-size: 13px;
+    line-height: 1.5;
+    color: #e0e2e6;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+  }
+  /* Cursor at end of text while typing */
+  .presentation-card.speaking .agent-text::after {
+    content: "▊";
+    color: var(--agent-color, #ccc);
+    margin-left: 1px;
+    animation: cursorBlink 0.9s step-end infinite;
+  }
+  @keyframes cursorBlink {
+    0%, 50%   { opacity: 1; }
+    51%, 100% { opacity: 0; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="renderCanvas"></canvas>
+
+<div id="overlay">
+  <div class="panel">
+    <h2>Target Company</h2>
+    <input id="taskInput" type="text" placeholder="e.g. Anthropic, OpenAI, Tesla..." />
+    <div>
+      <button class="btn" id="btnResearch">Start Research</button>
+      <button class="btn secondary" id="btnMeeting">Call Meeting</button>
+    </div>
+  </div>
+</div>
+
+<div id="topRight">
+  <button class="btn" id="btnView">Third-person <kbd>V</kbd></button>
+  <div id="status">● PREP SCENE — UI NOT WIRED</div>
+</div>
+
+<div id="help">
+  <span id="helpFP">
+    <kbd>Click</kbd> scene to enter &nbsp;·&nbsp;
+    <kbd>WASD</kbd> move &nbsp;·&nbsp;
+    <kbd>Mouse</kbd> look &nbsp;·&nbsp;
+    <kbd>Esc</kbd> release &nbsp;·&nbsp;
+    <kbd>V</kbd> toggle view
+  </span>
+  <span id="helpTP" style="display:none">
+    <kbd>Right-drag</kbd> orbit &nbsp;·&nbsp;
+    <kbd>Scroll</kbd> zoom &nbsp;·&nbsp;
+    <kbd>Click</kbd> agent to focus &nbsp;·&nbsp;
+    <kbd>V</kbd> toggle view
+  </span>
+</div>
+
+<!-- Meeting transcript panel: hidden until "Call Meeting" or _office.showMeetingTranscript() -->
+<div id="transcriptPanel">
+  <div id="transcriptHeader">
+    <div id="transcriptTitle">Meeting Transcript</div>
+    <button id="transcriptClose" title="Close">×</button>
+  </div>
+  <div id="transcriptScroll">
+    <!-- Presentation cards get appended here by addPresentation() -->
+  </div>
+</div>
+
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
+<script>
+// ============================================================
+// METAVERSE OFFICE — PREP SCENE
+// ============================================================
+// What this is: a foundation 3D office for the multi-agent VC project.
+// What's here:
+//   - Room (floor, walls, ceiling) with lighting
+//   - 4 agent desks around the room, each with a name label
+//   - Presentation room with projector screen
+//   - Agent placeholders (capsules) with floating name labels
+//   - Click-to-walk navigation (camera follows a "user" marker)
+//   - Click-on-agent focuses camera
+//   - Stub HTML overlay (not wired)
+//
+// What's NOT here yet (deliberately — for hackathon day):
+//   - Backend connection
+//   - Agent state machine logic
+//   - Desk screens with streaming text
+//   - Walking-to-meeting choreography
+//   - MongoDB / WebSocket integration
+// ============================================================
+
+const canvas = document.getElementById("renderCanvas");
+const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+
+// ---- Color palette (one place, easy to retheme) ----
+// Refreshed for a brighter, warmer modern-coworking aesthetic
+// (reference: open-plan office with floor-to-ceiling windows, warm wood floor)
+const COLORS = {
+  floor:        new BABYLON.Color3(0.62, 0.62, 0.64),  // polished concrete grey
+  floorAccent:  new BABYLON.Color3(0.55, 0.55, 0.57),  // (kept for compat, unused)
+  wall:         new BABYLON.Color3(0.95, 0.93, 0.88),  // warm off-white
+  accentWall:   new BABYLON.Color3(0.86, 0.80, 0.70),  // soft beige accent
+  ceiling:      new BABYLON.Color3(0.92, 0.91, 0.88),
+  ceilingBeam:  new BABYLON.Color3(0.55, 0.55, 0.58),  // industrial grey beams
+  desk:         new BABYLON.Color3(0.78, 0.62, 0.42),  // matches floor (modern look)
+  deskFrame:    new BABYLON.Color3(0.20, 0.20, 0.22),  // black metal desk legs
+  table:        new BABYLON.Color3(0.72, 0.55, 0.36),  // warm wood
+  chair:        new BABYLON.Color3(0.30, 0.30, 0.34),  // dark grey upholstery
+  chairLeg:     new BABYLON.Color3(0.15, 0.15, 0.18),  // black legs
+  monitor:      new BABYLON.Color3(0.10, 0.10, 0.12),  // dark monitor bezel
+  keyboard:     new BABYLON.Color3(0.18, 0.18, 0.20),
+  plant:        new BABYLON.Color3(0.30, 0.55, 0.30),  // healthy green
+  plantLight:   new BABYLON.Color3(0.45, 0.70, 0.40),  // highlight green
+  planter:      new BABYLON.Color3(0.45, 0.30, 0.20),  // terracotta-ish
+  glass:        new BABYLON.Color3(0.70, 0.85, 0.95),  // window glass tint
+  sky:          new BABYLON.Color3(0.75, 0.88, 0.98),  // sky behind windows
+  signNeon:     new BABYLON.Color3(0.95, 0.45, 0.20),  // warm orange neon sign
+};
+
+// Each agent gets its own accent color — easy to tell apart at a glance
+const AGENTS = [
+  { id: "market",      name: "Market Analyst",     color: new BABYLON.Color3(0.95, 0.40, 0.40), deskPos: { x: -7, z: -5 }, deskRot: 0 },
+  { id: "financial",   name: "Financial Analyst",  color: new BABYLON.Color3(0.40, 0.85, 0.55), deskPos: { x:  7, z: -5 }, deskRot: 0 },
+  { id: "esg",         name: "ESG Analyst",        color: new BABYLON.Color3(0.40, 0.65, 0.95), deskPos: { x: -7, z:  5 }, deskRot: Math.PI },
+  { id: "competitive", name: "Competitive Analyst",color: new BABYLON.Color3(0.95, 0.75, 0.30), deskPos: { x:  7, z:  5 }, deskRot: Math.PI },
+];
+
+const ROOM = { width: 20, depth: 16, height: 4 };
+
+// ============================================================
+// SCENE SETUP
+// ============================================================
+const createScene = () => {
+  const scene = new BABYLON.Scene(engine);
+  scene.clearColor = new BABYLON.Color4(0.75, 0.88, 0.98, 1);
+
+  // ---- Cameras (two of them: FP and TP) ----
+  // We build both up-front and toggle which is active. The character mesh
+  // is the source of truth for "where is the user" — both cameras read from it.
+
+  // Third-person: orbits around the character. Used for overview / demo shots.
+  const tpCamera = new BABYLON.ArcRotateCamera(
+    "tpCamera",
+    -Math.PI / 2,        // alpha (horizontal angle)
+    Math.PI / 3.2,       // beta (vertical — slightly tilted down)
+    8,                   // radius (closer than before, follows the character)
+    new BABYLON.Vector3(0, 1, 6),
+    scene
+  );
+  tpCamera.lowerRadiusLimit = 3;
+  tpCamera.upperRadiusLimit = 14;
+  tpCamera.lowerBetaLimit = 0.3;
+  tpCamera.upperBetaLimit = Math.PI / 2.1;  // can't go below floor
+  tpCamera.wheelDeltaPercentage = 0.01;
+  tpCamera.panningSensibility = 0;          // disable panning (keeps it on-rails)
+  // Note: no collision settings on tpCamera. The orbit camera can clip into walls
+  // if you zoom out a lot, but the upperRadiusLimit (14) keeps it inside the room.
+
+  // First-person: standard FPS controls. WASD to move, mouse to look.
+  // UniversalCamera handles mouse-look natively. We strip its built-in WASD
+  // (which moves along camera-forward including vertical) and replace with
+  // our own walking-only movement that ignores the vertical component.
+  const fpCamera = new BABYLON.UniversalCamera(
+    "fpCamera",
+    new BABYLON.Vector3(0, 1.6, 6),         // 1.6 = approx eye height
+    scene
+  );
+  fpCamera.angularSensibility = 700;        // lower = faster mouse-look. Tuned faster from 1200 per feedback.
+  fpCamera.inertia = 0;                     // no momentum — mouse stops, camera stops. Crisper.
+  fpCamera.minZ = 0.1;                      // near clip — important so walls don't cull when standing close
+
+  // ---- Disable built-in keyboard movement ----
+  // The default UniversalCamera moves along camera.getDirection() which
+  // includes the vertical component. That's why looking up + W = flying.
+  // We remove the keyboard input entirely and replace with our own logic
+  // below (in the render-loop section). Mouse input stays — that's what
+  // gives us mouse-look.
+  fpCamera.inputs.removeByType("FreeCameraKeyboardMoveInput");
+
+  // We do collision manually in the WASD render loop (simple box checks),
+  // so disable Babylon's built-in collision system on this camera.
+  fpCamera.checkCollisions = false;
+  fpCamera.applyGravity = false;
+
+  // Walking parameters — easy to tweak in one place
+  const WALK = {
+    speed: 0.05,           // base movement per frame at 60fps (~3 units/sec — comfortable indoor walking)
+    sprintMultiplier: 1.8, // hold Shift to sprint
+    eyeHeight: 1.6,        // locks camera Y to this — prevents drift
+  };
+
+  // Default to FP — most "metaverse-like" first impression
+  scene.activeCamera = fpCamera;
+
+  // ---- Lighting ----
+  // Soft ambient hemispheric for fill, plus a directional "sun" for shadows.
+  const hemi = new BABYLON.HemisphericLight("hemi", new BABYLON.Vector3(0, 1, 0), scene);
+  hemi.intensity = 0.85;                       // brighter ambient — daytime office vibe
+  hemi.groundColor = new BABYLON.Color3(0.45, 0.40, 0.35);
+  hemi.diffuse = new BABYLON.Color3(1.0, 0.96, 0.90);  // warm sunlight tint
+
+  const sun = new BABYLON.DirectionalLight("sun", new BABYLON.Vector3(-0.4, -0.8, -0.3), scene);
+  sun.intensity = 0.9;
+  sun.diffuse = new BABYLON.Color3(1.0, 0.94, 0.82);   // warm sunlight
+  sun.position = new BABYLON.Vector3(8, 12, 5);
+
+  const shadowGen = new BABYLON.ShadowGenerator(1024, sun);
+  shadowGen.useBlurExponentialShadowMap = true;
+  shadowGen.blurKernel = 32;
+
+  // Subtle accent point lights at each desk — adds visual interest cheaply
+  AGENTS.forEach(agent => {
+    const light = new BABYLON.PointLight(
+      `light_${agent.id}`,
+      new BABYLON.Vector3(agent.deskPos.x, 2.2, agent.deskPos.z),
+      scene
+    );
+    light.diffuse = agent.color;
+    light.intensity = 0.4;
+    light.range = 6;
+  });
+
+  // Meeting table light (warm)
+  const meetingLight = new BABYLON.PointLight("meetingLight", new BABYLON.Vector3(0, 2.8, 0), scene);
+  meetingLight.diffuse = new BABYLON.Color3(1, 0.85, 0.6);
+  meetingLight.intensity = 0.5;
+  meetingLight.range = 8;
+
+  // ============================================================
+  // ROOM
+  // ============================================================
+  buildRoom(scene);
+
+  // ============================================================
+  // AGENTS (desks + capsule avatars + name labels)
+  // ============================================================
+  const agentMeshes = [];
+  AGENTS.forEach(agent => {
+    const desk = buildDesk(scene, agent);
+    const avatar = buildAgent(scene, agent);
+    // Blocky characters are TransformNodes with mesh children (head, torso, etc.).
+    // Register each child mesh as a shadow caster.
+    avatar.getChildMeshes().forEach(m => shadowGen.addShadowCaster(m));
+    agentMeshes.push({ agent, desk, avatar });
+  });
+
+  // ============================================================
+  // BACKEND INTEGRATION POINT
+  // ============================================================
+  // window._office is the single seam between the 3D scene and the backend.
+  // On hackathon day, WebSocket events update fields on this object, and the
+  // animation/rendering code reacts. Keep all backend-driven mutations here.
+  //
+  // Methods to call from outside (these wrap animations cleanly):
+  //   _office.startMeeting()           — animate all agents to the presentation room
+  //   _office.setAgentState(id, state) — update an agent's state ("thinking", "presenting", etc.)
+  //   _office.updateScreenText(id, t)  — replace text on an agent's desk monitor
+  //
+  // State to read:
+  //   _office.agents     — list of { agent, desk, avatar } (avatar is the TransformNode)
+  //   _office.presenterSpots — list of { standPos, standRotY }
+  //   _office.meetingInProgress — bool
+  //
+  // Suggested WebSocket event mapping (write this on hackathon day):
+  //   { type:"agent_state", agent_id, state } → _office.setAgentState(agent_id, state)
+  //   { type:"agent_output_chunk", agent_id, text } → _office.updateScreenText(agent_id, text)
+  //   { type:"meeting_started" } → _office.startMeeting()
+  window._office = {
+    scene,
+    agents: agentMeshes,    // [{ agent, desk, avatar }]
+    presenterSpots: PRESENTER_SPOTS, // [{ standPos, standRotY }]
+    meetingInProgress: false,
+    // Wrapper methods — implementations live elsewhere; this just gives
+    // the backend code a stable surface to call.
+    startMeeting: () => startMeetingAnimation(),
+    setAgentState: (id, state) => {
+      const a = agentMeshes.find(m => m.agent.id === id);
+      if (a) console.log(`[STUB] agent ${id} → state ${state}`);
+      // ON HACKATHON DAY: change avatar visuals based on state
+      // (e.g. glow, label color, idle animation speed)
+    },
+    updateScreenText: (id, text) => {
+      const a = agentMeshes.find(m => m.agent.id === id);
+      if (a) console.log(`[STUB] agent ${id} screen: ${text.slice(0, 50)}...`);
+      // ON HACKATHON DAY: replace screen material with DynamicTexture
+      // and write text to it
+    },
+    // ---- Meeting transcript panel (HTML overlay) ----
+    // showMeetingTranscript: open the side panel, clear any previous content.
+    // addPresentation: append an agent's text to the panel with typing animation.
+    //   - agentId must match one of AGENTS[].id
+    //   - fullText is the complete presentation; it gets typed in over ~2s
+    //   - returns a Promise that resolves when typing completes (so backend
+    //     code can chain: agent presents → next agent presents)
+    showMeetingTranscript: () => showTranscriptPanel(),
+    addPresentation: (agentId, fullText) => addPresentationCard(agentId, fullText),
+    hideMeetingTranscript: () => hideTranscriptPanel(),
+  };
+
+  // ============================================================
+  // PRESENTATION ROOM
+  // ============================================================
+  buildPresentationRoom(scene, shadowGen);
+
+  // Plants, bins, signage etc. — pure decoration, no logic
+  buildEnvironmentDecor(scene, shadowGen);
+
+  // ============================================================
+  // USER CHARACTER (the "you")
+  // ============================================================
+  // Visible body for third-person view. Hidden in first-person.
+  // The character mesh is the source of truth for position — both cameras
+  // sync to it. In FP, we copy fpCamera.position → character on every frame.
+  // In TP, we move the character (eventually via WASD relative to camera) and
+  // tpCamera follows.
+  const character = buildCharacter(scene);
+  character.position = new BABYLON.Vector3(0, 0, 6);  // feet on floor
+
+  // tpCamera should look at the character's chest, not their feet (root is at y=0).
+  // We make an invisible marker at chest height, parent it to the character,
+  // and aim the camera at that.
+  const tpTarget = new BABYLON.TransformNode("tpTarget", scene);
+  tpTarget.parent = character;
+  tpTarget.position = new BABYLON.Vector3(0, 1.3, 0);  // chest level
+  tpCamera.lockedTarget = tpTarget;
+
+  // Hide the character in FP mode by default (we boot into FP)
+  character.setEnabled(false);
+
+  // ============================================================
+  // FIRST-PERSON / THIRD-PERSON TOGGLE
+  // ============================================================
+  // viewState holds which mode we're in plus references to UI bits we update.
+  const viewState = {
+    mode: "fp",  // "fp" or "tp"
+    btn: document.getElementById("btnView"),
+    helpFP: document.getElementById("helpFP"),
+    helpTP: document.getElementById("helpTP"),
+  };
+
+  function setView(mode) {
+    if (mode === viewState.mode) return;
+    viewState.mode = mode;
+
+    if (mode === "fp") {
+      // Snap FP camera to wherever the character was standing.
+      // Character's feet are at y=0; eye height is WALK.eyeHeight (1.6).
+      const charPos = character.position;
+      fpCamera.position = new BABYLON.Vector3(charPos.x, WALK.eyeHeight, charPos.z);
+
+      // Preserve facing direction: character.rotation.y → camera rotation.y
+      fpCamera.rotation.y = character.rotation.y;
+      fpCamera.rotation.x = 0;
+
+      scene.activeCamera = fpCamera;
+      tpCamera.detachControl();
+      // FP camera control is attached on canvas click (pointer lock flow)
+      character.setEnabled(false);
+
+      viewState.btn.innerHTML = 'Third-person <kbd>V</kbd>';
+      viewState.helpFP.style.display = "";
+      viewState.helpTP.style.display = "none";
+    } else {
+      // Snap character to wherever the FP camera is. Camera is at eye height (1.6),
+      // character's feet sit at y=0 directly below.
+      const camPos = fpCamera.position;
+      character.position = new BABYLON.Vector3(camPos.x, 0, camPos.z);
+      character.rotation.y = fpCamera.rotation.y;
+
+      scene.activeCamera = tpCamera;
+      fpCamera.detachControl();
+      tpCamera.attachControl(canvas, true);
+      character.setEnabled(true);
+
+      // Release pointer lock if we were in FP
+      if (document.pointerLockElement) document.exitPointerLock();
+
+      viewState.btn.innerHTML = 'First-person <kbd>V</kbd>';
+      viewState.helpFP.style.display = "none";
+      viewState.helpTP.style.display = "";
+    }
+  }
+
+  // Button click toggles
+  viewState.btn.addEventListener("click", () => {
+    setView(viewState.mode === "fp" ? "tp" : "fp");
+  });
+
+  // V key toggles (when not typing in an input)
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "v" || e.key === "V") {
+      if (document.activeElement && document.activeElement.tagName === "INPUT") return;
+      setView(viewState.mode === "fp" ? "tp" : "fp");
+    }
+  });
+
+  // ============================================================
+  // POINTER LOCK FOR FP MODE
+  // ============================================================
+  // FPS mouse-look needs pointer lock. Standard pattern:
+  //   - Click the canvas → request pointer lock + attach camera control
+  //   - Esc (browser default) → exit pointer lock
+  //   - On lock change, attach/detach camera control accordingly
+  //
+  // We deliberately don't lock automatically on page load — the user might
+  // be reading the help text or clicking the input box.
+  canvas.addEventListener("click", () => {
+    if (viewState.mode !== "fp") return;
+    if (document.activeElement && document.activeElement.tagName === "INPUT") return;
+    canvas.requestPointerLock = canvas.requestPointerLock || canvas.mozRequestPointerLock || canvas.webkitRequestPointerLock;
+    if (canvas.requestPointerLock) {
+      try { canvas.requestPointerLock(); } catch (e) { /* lock briefly unavailable */ }
+    }
+  });
+
+  document.addEventListener("pointerlockchange", () => {
+    if (document.pointerLockElement === canvas) {
+      if (viewState.mode === "fp") fpCamera.attachControl(canvas, true);
+    } else {
+      fpCamera.detachControl();
+    }
+  });
+
+  // Releasing pointer lock when input box gets focus keeps text typing sane
+  document.getElementById("taskInput").addEventListener("focus", () => {
+    if (document.pointerLockElement) document.exitPointerLock();
+  });
+
+  // ============================================================
+  // WALKING MOVEMENT (WASD with sprint, no flying)
+  // ============================================================
+  // Track which keys are held in a plain object. In the render loop, build
+  // a horizontal movement vector from WASD relative to where the camera is
+  // facing, and apply it directly to camera.position with a simple manual
+  // bounding-box check for walls.
+  //
+  // We deliberately avoid moveWithCollisions here — it can deadlock or freeze
+  // when collision setup isn't perfectly tuned, and a flat-floor office only
+  // needs box-shaped boundaries which are trivial to check by hand.
+  const keysHeld = {};
+  window.addEventListener("keydown", (e) => {
+    if (document.activeElement && document.activeElement.tagName === "INPUT") return;
+    keysHeld[e.code] = true;
+  });
+  window.addEventListener("keyup", (e) => {
+    keysHeld[e.code] = false;
+  });
+  // Drop held keys when window loses focus (alt-tab safety)
+  window.addEventListener("blur", () => {
+    for (const k in keysHeld) keysHeld[k] = false;
+  });
+
+  // Simple obstacles: list of axis-aligned boxes the character can't enter.
+  // Format: { minX, maxX, minZ, maxZ }. Cheap to check (4 comparisons each).
+  // Walls are handled by clamping to the room bounds, not in this list.
+  const OBSTACLES = [
+    // Desks (each desk is 2.4 wide × 1.2 deep, plus a small margin)
+    ...AGENTS.map(a => ({
+      minX: a.deskPos.x - 1.4, maxX: a.deskPos.x + 1.4,
+      minZ: a.deskPos.z - 0.75, maxZ: a.deskPos.z + 0.75,
+    })),
+    // Presentation room walls (beyond front wall, except doorway)
+    { minX: -4, maxX: -1, minZ: 7.5, maxZ: 8.5 },
+    { minX:  1, maxX:  4, minZ: 7.5, maxZ: 8.5 },
+  ];
+
+  // Movement margin from walls (don't let player put their nose against a wall)
+  const PLAYER_RADIUS = 0.4;
+  const ROOM_MIN_X = -ROOM.width / 2 + PLAYER_RADIUS;
+  const ROOM_MAX_X =  ROOM.width / 2 - PLAYER_RADIUS;
+  const ROOM_MIN_Z = -ROOM.depth / 2 + PLAYER_RADIUS;
+  const ROOM_MAX_Z =  ROOM.depth / 2 - PLAYER_RADIUS;
+
+  // Returns true if (x, z) is inside any obstacle box (with player radius).
+  function isBlocked(x, z) {
+    for (const box of OBSTACLES) {
+      if (
+        x > box.minX - PLAYER_RADIUS && x < box.maxX + PLAYER_RADIUS &&
+        z > box.minZ - PLAYER_RADIUS && z < box.maxZ + PLAYER_RADIUS
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  scene.onBeforeRenderObservable.add(() => {
+    if (viewState.mode !== "fp") return;
+    if (document.pointerLockElement !== canvas) return;
+
+    // Forward direction from yaw. When rotation.y = 0, camera looks down +Z.
+    const yaw = fpCamera.rotation.y;
+    const sinY = Math.sin(yaw);
+    const cosY = Math.cos(yaw);
+
+    // Build movement intent from WASD
+    let dx = 0, dz = 0;
+    if (keysHeld["KeyW"]) { dx += sinY;  dz += cosY; }
+    if (keysHeld["KeyS"]) { dx -= sinY;  dz -= cosY; }
+    if (keysHeld["KeyD"]) { dx += cosY;  dz -= sinY; }
+    if (keysHeld["KeyA"]) { dx -= cosY;  dz += sinY; }
+
+    if (dx === 0 && dz === 0) return;
+
+    // Normalize diagonal movement so it's not faster than straight
+    const len = Math.sqrt(dx * dx + dz * dz);
+    dx /= len;
+    dz /= len;
+
+    const sprint = keysHeld["ShiftLeft"] || keysHeld["ShiftRight"];
+    const speed = WALK.speed * (sprint ? WALK.sprintMultiplier : 1);
+    dx *= speed;
+    dz *= speed;
+
+    // Try X and Z separately so we can slide along walls/desks instead of stopping dead
+    let nx = fpCamera.position.x + dx;
+    let nz = fpCamera.position.z + dz;
+
+    // Clamp to room walls
+    nx = Math.max(ROOM_MIN_X, Math.min(ROOM_MAX_X, nx));
+    nz = Math.max(ROOM_MIN_Z, Math.min(ROOM_MAX_Z, nz));
+
+    // Block if entering an obstacle (try axes independently for sliding)
+    if (!isBlocked(nx, fpCamera.position.z)) fpCamera.position.x = nx;
+    if (!isBlocked(fpCamera.position.x, nz)) fpCamera.position.z = nz;
+
+    // Lock height (we never want vertical drift)
+    fpCamera.position.y = WALK.eyeHeight;
+  });
+
+  // ============================================================
+  // KEEP CHARACTER + FP CAMERA IN SYNC (per-frame)
+  // ============================================================
+  // In FP mode the camera moves; we mirror the position to the character
+  // so when we toggle to TP, the character is where the camera was.
+  // This is cheap (just copying a vector) so it's fine to do every frame.
+  scene.onBeforeRenderObservable.add(() => {
+    if (viewState.mode === "fp") {
+      character.position.x = fpCamera.position.x;
+      character.position.z = fpCamera.position.z;
+      character.position.y = 0;  // feet on floor
+      character.rotation.y = fpCamera.rotation.y;
+    }
+  });
+
+  // ============================================================
+  // INTERACTION: click an agent in TP mode to focus camera
+  // ============================================================
+  // Removed click-to-walk (replaced by WASD). Click-on-agent only fires in TP
+  // since FP swallows clicks for pointer lock.
+  scene.onPointerObservable.add((pointerInfo) => {
+    if (pointerInfo.type !== BABYLON.PointerEventTypes.POINTERDOWN) return;
+    if (pointerInfo.event.button !== 0) return;
+    if (viewState.mode !== "tp") return;
+
+    const pick = pointerInfo.pickInfo;
+    if (!pick || !pick.hit) return;
+
+    // Walk up the parent chain to find which agent (if any) was clicked.
+    // Blocky characters are TransformNodes with multiple mesh children, so
+    // pickedMesh will be e.g. the head or torso, not the avatar root.
+    const clickedAgent = agentMeshes.find(a => {
+      let node = pick.pickedMesh;
+      while (node) {
+        if (node === a.avatar) return true;
+        node = node.parent;
+      }
+      return false;
+    });
+    if (clickedAgent) {
+      focusOnAgent(tpCamera, clickedAgent.avatar);
+    }
+  });
+
+  return scene;
+};
+
+// ============================================================
+// ROOM CONSTRUCTION
+// ============================================================
+function buildRoom(scene) {
+  // ---- Floor (polished concrete) ----
+  const floor = BABYLON.MeshBuilder.CreateGround("floor",
+    { width: ROOM.width, height: ROOM.depth }, scene);
+  const floorMat = new BABYLON.StandardMaterial("floorMat", scene);
+  floorMat.diffuseColor = COLORS.floor;
+  floorMat.specularColor = new BABYLON.Color3(0.35, 0.35, 0.38);  // subtle sheen
+  floorMat.specularPower = 64;
+  floor.material = floorMat;
+  floor.receiveShadows = true;
+  // Note: previously had decorative plank lines for a wood-floor look;
+  // removed for the concrete aesthetic.
+
+  // ---- Materials shared by walls ----
+  const wallMat = new BABYLON.StandardMaterial("wallMat", scene);
+  wallMat.diffuseColor = COLORS.wall;
+  wallMat.specularColor = new BABYLON.Color3(0, 0, 0);
+
+  const accentMat = new BABYLON.StandardMaterial("accentMat", scene);
+  accentMat.diffuseColor = COLORS.accentWall;
+  accentMat.specularColor = new BABYLON.Color3(0, 0, 0);
+
+  // ---- Solid walls (back, right, front — left wall is windows) ----
+  const makeWall = (name, w, h, pos, rot, mat) => {
+    const wall = BABYLON.MeshBuilder.CreatePlane(name,
+      { width: w, height: h, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+    wall.position = pos;
+    wall.rotation = rot;
+    wall.material = mat;
+    wall.checkCollisions = true;
+    return wall;
+  };
+
+  makeWall("wallBack", ROOM.width, ROOM.height,
+    new BABYLON.Vector3(0, ROOM.height / 2, -ROOM.depth / 2),
+    new BABYLON.Vector3(0, 0, 0), accentMat);
+
+  // Front wall — split into two halves with a doorway to the presentation room
+  const doorWidth = 2.0;
+  const frontSideW = (ROOM.width - doorWidth) / 2;
+  makeWall("wallFrontL", frontSideW, ROOM.height,
+    new BABYLON.Vector3(-ROOM.width / 2 + frontSideW / 2, ROOM.height / 2, ROOM.depth / 2),
+    new BABYLON.Vector3(0, Math.PI, 0), wallMat);
+  makeWall("wallFrontR", frontSideW, ROOM.height,
+    new BABYLON.Vector3(ROOM.width / 2 - frontSideW / 2, ROOM.height / 2, ROOM.depth / 2),
+    new BABYLON.Vector3(0, Math.PI, 0), wallMat);
+
+  makeWall("wallRight", ROOM.depth, ROOM.height,
+    new BABYLON.Vector3(ROOM.width / 2, ROOM.height / 2, 0),
+    new BABYLON.Vector3(0, -Math.PI / 2, 0), wallMat);
+
+  // ---- LEFT WALL: floor-to-ceiling windows ----
+  // Build it from a frame (dark mullions) with transparent glass panels in between.
+  // The "outside" is a sky-colored plane positioned beyond the wall.
+  buildWindowWall(scene);
+
+  // ---- Ceiling with industrial beams ----
+  const ceiling = BABYLON.MeshBuilder.CreatePlane("ceiling",
+    { width: ROOM.width, height: ROOM.depth }, scene);
+  ceiling.position = new BABYLON.Vector3(0, ROOM.height, 0);
+  ceiling.rotation = new BABYLON.Vector3(-Math.PI / 2, 0, 0);
+  const ceilMat = new BABYLON.StandardMaterial("ceilMat", scene);
+  ceilMat.diffuseColor = COLORS.ceiling;
+  ceiling.material = ceilMat;
+
+  // Cross-beams running across the ceiling (industrial-style)
+  const beamMat = new BABYLON.StandardMaterial("beamMat", scene);
+  beamMat.diffuseColor = COLORS.ceilingBeam;
+  beamMat.specularColor = new BABYLON.Color3(0.2, 0.2, 0.2);
+
+  for (let i = 1; i < 4; i++) {
+    const beam = BABYLON.MeshBuilder.CreateBox(`beam_${i}`,
+      { width: ROOM.width, height: 0.15, depth: 0.2 }, scene);
+    beam.position = new BABYLON.Vector3(
+      0,
+      ROOM.height - 0.08,
+      -ROOM.depth / 2 + (i * ROOM.depth / 4)
+    );
+    beam.material = beamMat;
+  }
+
+  // ---- Wall sign on back wall (warm orange "neon" — purely visual) ----
+  // Built as a thin emissive panel; no actual lighting calculation since
+  // PointLight isn't worth it for a small sign.
+  const sign = BABYLON.MeshBuilder.CreatePlane("sign",
+    { width: 4, height: 0.7 }, scene);
+  sign.position = new BABYLON.Vector3(0, 2.8, -ROOM.depth / 2 + 0.05);
+  const signMat = new BABYLON.StandardMaterial("signMat", scene);
+  signMat.diffuseColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+  signMat.emissiveColor = COLORS.signNeon;
+  sign.material = signMat;
+
+  // Sign text via dynamic texture
+  const signTexture = BABYLON.GUI.AdvancedDynamicTexture.CreateForMesh(sign);
+  const signText = new BABYLON.GUI.TextBlock();
+  signText.text = "THE OFFICE";
+  signText.color = "white";
+  signText.fontSize = 200;
+  signText.fontFamily = "system-ui, sans-serif";
+  signText.fontWeight = "700";
+  signTexture.addControl(signText);
+}
+
+// ============================================================
+// WINDOW WALL (left side — floor-to-ceiling glass) + OUTDOOR VIEW
+// ============================================================
+// The wall itself is mullions + transparent glass.
+// Beyond the wall we build a simple "outdoor scene" out of primitives:
+// sky gradient (background plane), sun, cloud puffs, distant building boxes,
+// and a road/ground plane below window level. Everything outside is purely
+// visual — no collision, no logic, never reached by the player.
+function buildWindowWall(scene) {
+  const wallX = -ROOM.width / 2;
+
+  buildOutdoorBackdrop(scene, wallX);
+
+  // Vertical mullions every 2 units along the wall
+  const mullionMat = new BABYLON.StandardMaterial("mullionMat", scene);
+  mullionMat.diffuseColor = new BABYLON.Color3(0.20, 0.20, 0.22);
+  mullionMat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+
+  const mullionCount = Math.floor(ROOM.depth / 2);
+  for (let i = 0; i <= mullionCount; i++) {
+    const z = -ROOM.depth / 2 + (i / mullionCount) * ROOM.depth;
+    const m = BABYLON.MeshBuilder.CreateBox(`mullion_${i}`,
+      { width: 0.12, height: ROOM.height, depth: 0.12 }, scene);
+    m.position = new BABYLON.Vector3(wallX, ROOM.height / 2, z);
+    m.material = mullionMat;
+  }
+
+  // Horizontal frame top + bottom + middle
+  const makeHorizontal = (yPos, name) => {
+    const f = BABYLON.MeshBuilder.CreateBox(name,
+      { width: 0.12, height: 0.12, depth: ROOM.depth }, scene);
+    f.position = new BABYLON.Vector3(wallX, yPos, 0);
+    f.material = mullionMat;
+  };
+  makeHorizontal(0.05, "windowFrameBottom");
+  makeHorizontal(ROOM.height - 0.05, "windowFrameTop");
+  makeHorizontal(ROOM.height / 2, "windowFrameMid");
+
+  // Transparent glass panel covering the whole opening (slight tint).
+  // The collision flag means you can't walk through the windows.
+  const glass = BABYLON.MeshBuilder.CreatePlane("glass",
+    { width: ROOM.depth, height: ROOM.height,
+      sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+  glass.position = new BABYLON.Vector3(wallX + 0.01, ROOM.height / 2, 0);
+  glass.rotation = new BABYLON.Vector3(0, Math.PI / 2, 0);
+  const glassMat = new BABYLON.StandardMaterial("glassMat", scene);
+  glassMat.diffuseColor = COLORS.glass;
+  glassMat.alpha = 0.12;
+  glassMat.specularColor = new BABYLON.Color3(0.5, 0.5, 0.6);
+  glassMat.specularPower = 64;
+  glass.material = glassMat;
+  glass.checkCollisions = true;
+}
+
+// Builds the rooftop-view backdrop visible through the windows.
+// All geometry sits outside the room (negative X, beyond the wall).
+function buildOutdoorBackdrop(scene, wallX) {
+  // ---- Sky backdrop (large plane far behind) ----
+  // Vertical gradient: deeper blue at top, paler near horizon. Babylon's
+  // StandardMaterial doesn't gradient by itself, so we stack two planes —
+  // a back one (dark blue) and a front one (light, alpha-faded at top).
+  // Cheap but effective.
+  const skyFar = BABYLON.MeshBuilder.CreatePlane("skyFar",
+    { width: 80, height: 30, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+  skyFar.position = new BABYLON.Vector3(wallX - 18, 8, 0);
+  skyFar.rotation = new BABYLON.Vector3(0, Math.PI / 2, 0);
+  const skyFarMat = new BABYLON.StandardMaterial("skyFarMat", scene);
+  skyFarMat.diffuseColor = new BABYLON.Color3(0.45, 0.65, 0.85);
+  skyFarMat.emissiveColor = new BABYLON.Color3(0.55, 0.72, 0.92);
+  skyFarMat.specularColor = new BABYLON.Color3(0, 0, 0);
+  skyFar.material = skyFarMat;
+
+  // ---- Sun (bright disc on the sky) ----
+  const sun = BABYLON.MeshBuilder.CreateDisc("sun",
+    { radius: 1.2, tessellation: 32 }, scene);
+  sun.position = new BABYLON.Vector3(wallX - 17.8, 11, 5);
+  sun.rotation = new BABYLON.Vector3(0, Math.PI / 2, 0);
+  const sunMat = new BABYLON.StandardMaterial("sunMat", scene);
+  sunMat.diffuseColor = new BABYLON.Color3(1.0, 0.95, 0.78);
+  sunMat.emissiveColor = new BABYLON.Color3(1.0, 0.95, 0.78);
+  sunMat.specularColor = new BABYLON.Color3(0, 0, 0);
+  sun.material = sunMat;
+
+  // Sun glow (bigger, dimmer, semi-transparent disc behind the sun)
+  const sunGlow = BABYLON.MeshBuilder.CreateDisc("sunGlow",
+    { radius: 2.4, tessellation: 32 }, scene);
+  sunGlow.position = new BABYLON.Vector3(wallX - 17.85, 11, 5);
+  sunGlow.rotation = new BABYLON.Vector3(0, Math.PI / 2, 0);
+  const sunGlowMat = new BABYLON.StandardMaterial("sunGlowMat", scene);
+  sunGlowMat.diffuseColor = new BABYLON.Color3(1.0, 0.9, 0.7);
+  sunGlowMat.emissiveColor = new BABYLON.Color3(1.0, 0.9, 0.7);
+  sunGlowMat.alpha = 0.35;
+  sunGlow.material = sunGlowMat;
+
+  // ---- Clouds (flat ovals scattered across the sky) ----
+  // Each cloud is an elongated disc with a fluffy white emissive look.
+  const cloudData = [
+    { y: 13, z: -8, w: 5,  h: 1.4 },
+    { y: 11, z: -2, w: 3.5, h: 1.0 },
+    { y: 14, z:  9, w: 6,  h: 1.6 },
+    { y: 9.5,z:  -12, w: 4,  h: 1.1 },
+    { y: 12, z:  16, w: 4.5,h: 1.3 },
+  ];
+  cloudData.forEach((c, i) => {
+    const cloud = BABYLON.MeshBuilder.CreatePlane(`cloud_${i}`,
+      { width: c.w, height: c.h, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+    cloud.position = new BABYLON.Vector3(wallX - 17, c.y, c.z);
+    cloud.rotation = new BABYLON.Vector3(0, Math.PI / 2, 0);
+    const cloudMat = new BABYLON.StandardMaterial(`cloudMat_${i}`, scene);
+    cloudMat.diffuseColor = new BABYLON.Color3(1, 1, 1);
+    cloudMat.emissiveColor = new BABYLON.Color3(0.95, 0.96, 0.98);
+    cloudMat.specularColor = new BABYLON.Color3(0, 0, 0);
+    cloud.material = cloudMat;
+  });
+
+  // ---- City buildings (silhouettes in middle distance) ----
+  // Mix of colors and heights to look like a real skyline. Each building is
+  // a simple box positioned outside the window. We give a few of them
+  // window grids (tiny dark dots) for added detail, but keep most plain to
+  // save geometry.
+  const buildingPositions = [
+    // [x_offset_from_wall, z_position, width, height_above_ground, depth, color]
+    { dx: -10, z: -14, w: 3.5, h: 9,  d: 3, c: [0.48, 0.50, 0.55] },
+    { dx: -11, z: -10, w: 4,   h: 12, d: 3.5, c: [0.55, 0.55, 0.60] },
+    { dx: -9,  z: -6,  w: 3,   h: 7,  d: 2.5, c: [0.40, 0.42, 0.46] },
+    { dx: -12, z: -2,  w: 4.5, h: 14, d: 4, c: [0.60, 0.58, 0.55] },
+    { dx: -10, z:  3,  w: 3,   h: 8,  d: 3, c: [0.45, 0.48, 0.52] },
+    { dx: -11, z:  8,  w: 4,   h: 11, d: 3.5, c: [0.52, 0.52, 0.56] },
+    { dx: -9,  z: 13,  w: 3.2, h: 6,  d: 2.8, c: [0.42, 0.45, 0.48] },
+    // A taller standout in the back (further away)
+    { dx: -15, z: -3,  w: 4,   h: 18, d: 4, c: [0.62, 0.60, 0.58] },
+  ];
+  buildingPositions.forEach((b, i) => {
+    const bldg = BABYLON.MeshBuilder.CreateBox(`bldg_${i}`,
+      { width: b.d, height: b.h, depth: b.w }, scene);
+    bldg.position = new BABYLON.Vector3(wallX + b.dx, b.h / 2 - 2, b.z);
+    const bMat = new BABYLON.StandardMaterial(`bMat_${i}`, scene);
+    bMat.diffuseColor = new BABYLON.Color3(b.c[0], b.c[1], b.c[2]);
+    bMat.specularColor = new BABYLON.Color3(0.15, 0.15, 0.18);
+    bldg.material = bMat;
+
+    // Window grid on the wall facing the viewer (positive X face).
+    // A 3×N grid of small dark squares — reads as windows from a distance.
+    const winRows = Math.max(2, Math.floor(b.h / 1.5));
+    const winCols = 3;
+    for (let r = 1; r < winRows; r++) {
+      for (let c = 0; c < winCols; c++) {
+        const win = BABYLON.MeshBuilder.CreatePlane(`win_${i}_${r}_${c}`,
+          { width: 0.4, height: 0.5 }, scene);
+        win.position = new BABYLON.Vector3(
+          wallX + b.dx + b.d / 2 + 0.01,  // just in front of the building face
+          (r / winRows) * b.h - 2,
+          b.z - b.w / 2 + ((c + 0.5) / winCols) * b.w
+        );
+        win.rotation.y = Math.PI / 2;
+        const winMat = new BABYLON.StandardMaterial(`winMat_${i}_${r}_${c}`, scene);
+        // Some windows lit (warm), most dark
+        if (Math.random() < 0.25) {
+          winMat.diffuseColor = new BABYLON.Color3(0.95, 0.85, 0.55);
+          winMat.emissiveColor = new BABYLON.Color3(0.85, 0.75, 0.45);
+        } else {
+          winMat.diffuseColor = new BABYLON.Color3(0.15, 0.18, 0.22);
+        }
+        win.material = winMat;
+      }
+    }
+  });
+
+  // ---- Ground/road below the window line ----
+  // Grey asphalt strip in front of the buildings, with a yellow center line.
+  const ground = BABYLON.MeshBuilder.CreateGround("outdoorGround",
+    { width: 30, height: 60 }, scene);
+  ground.position = new BABYLON.Vector3(wallX - 9, -2, 0);
+  const groundMat = new BABYLON.StandardMaterial("outdoorGroundMat", scene);
+  groundMat.diffuseColor = new BABYLON.Color3(0.30, 0.30, 0.32);
+  groundMat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+  ground.material = groundMat;
+
+  // Road (darker strip running along z)
+  const road = BABYLON.MeshBuilder.CreateGround("road",
+    { width: 6, height: 60 }, scene);
+  road.position = new BABYLON.Vector3(wallX - 5, -1.99, 0);
+  const roadMat = new BABYLON.StandardMaterial("roadMat", scene);
+  roadMat.diffuseColor = new BABYLON.Color3(0.18, 0.18, 0.20);
+  road.material = roadMat;
+
+  // Yellow center line dashes
+  for (let i = -5; i <= 5; i++) {
+    const dash = BABYLON.MeshBuilder.CreateBox(`dash_${i}`,
+      { width: 0.15, height: 0.02, depth: 1.2 }, scene);
+    dash.position = new BABYLON.Vector3(wallX - 5, -1.97, i * 4);
+    const dashMat = new BABYLON.StandardMaterial(`dashMat_${i}`, scene);
+    dashMat.diffuseColor = new BABYLON.Color3(0.85, 0.75, 0.20);
+    dashMat.emissiveColor = new BABYLON.Color3(0.4, 0.35, 0.10);
+    dash.material = dashMat;
+  }
+
+  // A few parked cars as static props (just simple boxes, suggest scale)
+  const carColors = [
+    [0.7, 0.2, 0.2],
+    [0.2, 0.3, 0.5],
+    [0.85, 0.85, 0.85],
+    [0.15, 0.15, 0.18],
+  ];
+  carColors.forEach((c, i) => {
+    const carBody = BABYLON.MeshBuilder.CreateBox(`car_${i}`,
+      { width: 1.7, height: 0.6, depth: 0.8 }, scene);
+    carBody.position = new BABYLON.Vector3(wallX - 8, -1.7, -8 + i * 5);
+    const carMat = new BABYLON.StandardMaterial(`carMat_${i}`, scene);
+    carMat.diffuseColor = new BABYLON.Color3(c[0], c[1], c[2]);
+    carMat.specularColor = new BABYLON.Color3(0.5, 0.5, 0.5);
+    carMat.specularPower = 64;
+    carBody.material = carMat;
+
+    // Roof (thinner, narrower box)
+    const roof = BABYLON.MeshBuilder.CreateBox(`carRoof_${i}`,
+      { width: 1.0, height: 0.4, depth: 0.7 }, scene);
+    roof.position = new BABYLON.Vector3(wallX - 8, -1.2, -8 + i * 5);
+    roof.material = carMat;
+  });
+}
+
+// ============================================================
+// DESK + DESK SCREEN PLACEHOLDER
+// ============================================================
+function buildDesk(scene, agent) {
+  const parent = new BABYLON.TransformNode(`desk_${agent.id}`, scene);
+  parent.position = new BABYLON.Vector3(agent.deskPos.x, 0, agent.deskPos.z);
+  parent.rotation = new BABYLON.Vector3(0, agent.deskRot, 0);
+
+  // ---- Materials ----
+  const deskMat = new BABYLON.StandardMaterial(`deskMat_${agent.id}`, scene);
+  deskMat.diffuseColor = COLORS.desk;
+  deskMat.specularColor = new BABYLON.Color3(0.15, 0.12, 0.08);
+  deskMat.specularPower = 32;
+
+  const frameMat = new BABYLON.StandardMaterial(`frameMat_${agent.id}`, scene);
+  frameMat.diffuseColor = COLORS.deskFrame;
+  frameMat.specularColor = new BABYLON.Color3(0.3, 0.3, 0.3);
+
+  const monitorMat = new BABYLON.StandardMaterial(`monitorMat_${agent.id}`, scene);
+  monitorMat.diffuseColor = COLORS.monitor;
+  monitorMat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+
+  const keyboardMat = new BABYLON.StandardMaterial(`keyboardMat_${agent.id}`, scene);
+  keyboardMat.diffuseColor = COLORS.keyboard;
+
+  // ---- Desk top (slightly thinner, modern slab) ----
+  const top = BABYLON.MeshBuilder.CreateBox(`deskTop_${agent.id}`,
+    { width: 2.4, height: 0.06, depth: 1.2 }, scene);
+  top.position.y = 0.85;
+  top.material = deskMat;
+  top.parent = parent;
+  top.checkCollisions = true;
+
+  // ---- Modern minimalist desk frame: two side panels (not 4 legs) ----
+  const sidePanelL = BABYLON.MeshBuilder.CreateBox(`sideL_${agent.id}`,
+    { width: 0.04, height: 0.82, depth: 1.0 }, scene);
+  sidePanelL.position = new BABYLON.Vector3(-1.05, 0.41, 0);
+  sidePanelL.material = frameMat;
+  sidePanelL.parent = parent;
+
+  const sidePanelR = BABYLON.MeshBuilder.CreateBox(`sideR_${agent.id}`,
+    { width: 0.04, height: 0.82, depth: 1.0 }, scene);
+  sidePanelR.position = new BABYLON.Vector3(1.05, 0.41, 0);
+  sidePanelR.material = frameMat;
+  sidePanelR.parent = parent;
+
+  // Crossbar between the panels at the back (structural)
+  const crossbar = BABYLON.MeshBuilder.CreateBox(`crossbar_${agent.id}`,
+    { width: 2.0, height: 0.04, depth: 0.04 }, scene);
+  crossbar.position = new BABYLON.Vector3(0, 0.15, -0.45);
+  crossbar.material = frameMat;
+  crossbar.parent = parent;
+
+  // ---- Monitor: bezel + screen + stand ----
+  // Bezel (a thicker rim around the screen — sells "real monitor" look)
+  const bezel = BABYLON.MeshBuilder.CreateBox(`bezel_${agent.id}`,
+    { width: 1.2, height: 0.7, depth: 0.04 }, scene);
+  bezel.position = new BABYLON.Vector3(0, 1.45, -0.35);
+  bezel.material = monitorMat;
+  bezel.parent = parent;
+
+  // Screen face — slightly inset, glowing in agent's color
+  // ON HACKATHON DAY: replace screenMat with DynamicTexture showing live agent output
+  const screen = BABYLON.MeshBuilder.CreatePlane(`screen_${agent.id}`,
+    { width: 1.1, height: 0.6, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+  screen.position = new BABYLON.Vector3(0, 1.45, -0.32);
+  const screenMat = new BABYLON.StandardMaterial(`screenMat_${agent.id}`, scene);
+  screenMat.emissiveColor = agent.color.scale(0.5);
+  screenMat.diffuseColor = new BABYLON.Color3(0.05, 0.05, 0.08);
+  screen.material = screenMat;
+  screen.parent = parent;
+
+  // Monitor stand (thin neck + base disc)
+  const stand = BABYLON.MeshBuilder.CreateCylinder(`stand_${agent.id}`,
+    { diameter: 0.06, height: 0.18, tessellation: 8 }, scene);
+  stand.position = new BABYLON.Vector3(0, 1.0, -0.35);
+  stand.material = monitorMat;
+  stand.parent = parent;
+
+  const standBase = BABYLON.MeshBuilder.CreateCylinder(`standBase_${agent.id}`,
+    { diameter: 0.35, height: 0.025, tessellation: 16 }, scene);
+  standBase.position = new BABYLON.Vector3(0, 0.895, -0.35);
+  standBase.material = monitorMat;
+  standBase.parent = parent;
+
+  // ---- Keyboard ----
+  const keyboard = BABYLON.MeshBuilder.CreateBox(`keyboard_${agent.id}`,
+    { width: 0.7, height: 0.025, depth: 0.22 }, scene);
+  keyboard.position = new BABYLON.Vector3(0, 0.895, 0.05);
+  keyboard.material = keyboardMat;
+  keyboard.parent = parent;
+
+  // ---- Mouse (small pad next to keyboard) ----
+  const mouse = BABYLON.MeshBuilder.CreateBox(`mouse_${agent.id}`,
+    { width: 0.08, height: 0.02, depth: 0.13 }, scene);
+  mouse.position = new BABYLON.Vector3(0.5, 0.892, 0.05);
+  mouse.material = keyboardMat;
+  mouse.parent = parent;
+
+  // ---- Mug (cylinder, agent's accent color — a small splash of personality) ----
+  const mug = BABYLON.MeshBuilder.CreateCylinder(`mug_${agent.id}`,
+    { diameter: 0.13, height: 0.16, tessellation: 12 }, scene);
+  mug.position = new BABYLON.Vector3(-0.7, 0.96, 0.1);
+  const mugMat = new BABYLON.StandardMaterial(`mugMat_${agent.id}`, scene);
+  mugMat.diffuseColor = agent.color.scale(0.7);
+  mug.material = mugMat;
+  mug.parent = parent;
+
+  return parent;
+}
+
+// ============================================================
+// AGENT AVATAR (Minecraft-style blocky character) + name label
+// ============================================================
+// Built from stacked boxes: head, torso, two arms, two legs, all parented
+// to an invisible root. Each agent gets a different shirt color (their
+// accent color) but otherwise identical silhouette. Reads as "person" instantly.
+function buildAgent(scene, agent) {
+  // Position in front of desk, facing it
+  const facing = agent.deskRot;
+  const offsetZ = facing === 0 ? 0.9 : -0.9;
+  const root = buildBlockyCharacter(scene, `agent_${agent.id}`, {
+    skinColor: new BABYLON.Color3(0.95, 0.78, 0.62),    // light skin tone
+    shirtColor: agent.color,                              // each agent's accent
+    pantsColor: new BABYLON.Color3(0.18, 0.20, 0.30),   // dark blue pants
+    shoeColor:  new BABYLON.Color3(0.08, 0.08, 0.10),   // black shoes
+  });
+
+  root.position = new BABYLON.Vector3(
+    agent.deskPos.x,
+    0,                       // feet on the floor (the character's root sits at the floor)
+    agent.deskPos.z + offsetZ
+  );
+  root.rotation.y = facing + Math.PI;  // face the desk
+
+  // Floating name label above the head
+  const labelPlane = BABYLON.MeshBuilder.CreatePlane(`label_${agent.id}`,
+    { width: 2, height: 0.5 }, scene);
+  labelPlane.position = new BABYLON.Vector3(0, 2.4, 0);  // above the head
+  labelPlane.parent = root;
+  labelPlane.billboardMode = BABYLON.Mesh.BILLBOARDMODE_ALL;
+
+  const labelTexture = BABYLON.GUI.AdvancedDynamicTexture.CreateForMesh(labelPlane);
+  const rect = new BABYLON.GUI.Rectangle();
+  rect.width = 1;
+  rect.height = 1;
+  rect.cornerRadius = 40;
+  rect.color = "transparent";
+  rect.background = "rgba(15, 15, 22, 0.85)";
+  labelTexture.addControl(rect);
+
+  const text = new BABYLON.GUI.TextBlock();
+  text.text = agent.name;
+  text.color = "white";
+  text.fontSize = 80;
+  text.fontFamily = "system-ui, sans-serif";
+  rect.addControl(text);
+
+  // Idle bob — slight up/down, different period per agent so they don't sync
+  const baseY = root.position.y;
+  const bobAnim = new BABYLON.Animation(
+    `bob_${agent.id}`, "position.y", 30,
+    BABYLON.Animation.ANIMATIONTYPE_FLOAT,
+    BABYLON.Animation.ANIMATIONLOOPMODE_CYCLE
+  );
+  const period = 60 + AGENTS.indexOf(agent) * 8;
+  bobAnim.setKeys([
+    { frame: 0,          value: baseY },
+    { frame: period / 2, value: baseY + 0.04 },
+    { frame: period,     value: baseY },
+  ]);
+  root.animations.push(bobAnim);
+  // Store the animatable so we can stop the bob when the meeting starts
+  // (otherwise it fights the walking animation for control of position.y)
+  root._bobAnim = scene.beginAnimation(root, 0, period, true);
+
+  return root;
+}
+
+// ============================================================
+// USER CHARACTER (Minecraft-style, distinct outfit so it reads as "you")
+// ============================================================
+function buildCharacter(scene) {
+  // Same blocky template, different color scheme so user is visually distinct
+  // from any of the agents.
+  return buildBlockyCharacter(scene, "character", {
+    skinColor:  new BABYLON.Color3(0.92, 0.74, 0.58),    // slightly different skin tone
+    shirtColor: new BABYLON.Color3(0.30, 0.55, 0.85),    // bright blue shirt
+    pantsColor: new BABYLON.Color3(0.28, 0.22, 0.16),    // brown pants
+    shoeColor:  new BABYLON.Color3(0.20, 0.12, 0.08),    // brown shoes
+  });
+}
+
+// ============================================================
+// BLOCKY CHARACTER BUILDER (shared by agents and user)
+// ============================================================
+// Returns a TransformNode with body parts as children. Proportions roughly
+// follow Minecraft's Steve: head (8x8x8 cubits), torso (4x12x8), arms (4x12x4
+// each), legs (4x12x4 each). We scale to "1 cubit = 0.1 unit" so total height
+// is about 1.8 units (a reasonable adult height in our scene).
+//
+// All boxes are positioned so the character's "feet" (bottom of legs) sit at
+// y=0, meaning you place this with `root.position.y = 0` and it stands on
+// the floor naturally.
+function buildBlockyCharacter(scene, name, colors) {
+  const root = new BABYLON.TransformNode(`${name}_root`, scene);
+  // We need a Mesh (not just a TransformNode) for shadow casting and
+  // mesh-targeted features. We'll use root as the parent of all parts and
+  // a small invisible Mesh at the same position for any mesh-only ops.
+
+  // ---- Materials (one per color, reused across boxes for performance) ----
+  const skinMat = new BABYLON.StandardMaterial(`${name}_skinMat`, scene);
+  skinMat.diffuseColor = colors.skinColor;
+  skinMat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);  // matte
+
+  const shirtMat = new BABYLON.StandardMaterial(`${name}_shirtMat`, scene);
+  shirtMat.diffuseColor = colors.shirtColor;
+  shirtMat.emissiveColor = colors.shirtColor.scale(0.1);  // very subtle glow
+  shirtMat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+
+  const pantsMat = new BABYLON.StandardMaterial(`${name}_pantsMat`, scene);
+  pantsMat.diffuseColor = colors.pantsColor;
+  pantsMat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+
+  const shoeMat = new BABYLON.StandardMaterial(`${name}_shoeMat`, scene);
+  shoeMat.diffuseColor = colors.shoeColor;
+  shoeMat.specularColor = new BABYLON.Color3(0.05, 0.05, 0.05);
+
+  // Helper: build a box, parent it to root, set material, return it
+  const part = (partName, w, h, d, x, y, z, mat) => {
+    const box = BABYLON.MeshBuilder.CreateBox(`${name}_${partName}`,
+      { width: w, height: h, depth: d }, scene);
+    box.position = new BABYLON.Vector3(x, y, z);
+    box.material = mat;
+    box.parent = root;
+    return box;
+  };
+
+  // ---- Body parts ----
+  // Heights stacked from feet (y=0) up:
+  //   legs: 0.0 → 0.85
+  //   torso: 0.85 → 1.45
+  //   head: 1.5 → 1.95
+  //   arms hang from shoulder (y=1.45) down to y=0.85
+
+  // Legs and arms use a "pivot wrapper" pattern: the actual mesh hangs from
+  // a TransformNode positioned at the hip/shoulder. Rotating the wrapper
+  // swings the limb naturally around the joint, instead of around the limb's
+  // center (which would look like a teeter-totter).
+  function makeLimb(partName, w, h, d, hipX, hipY, mat) {
+    const hip = new BABYLON.TransformNode(`${name}_${partName}_pivot`, scene);
+    hip.position = new BABYLON.Vector3(hipX, hipY, 0);
+    hip.parent = root;
+
+    const limb = BABYLON.MeshBuilder.CreateBox(`${name}_${partName}`,
+      { width: w, height: h, depth: d }, scene);
+    limb.position.y = -h / 2;  // hangs below the pivot
+    limb.material = mat;
+    limb.parent = hip;
+    return { pivot: hip, mesh: limb };
+  }
+
+  // Legs (pivots at the hip, ~y=0.85)
+  const legL = makeLimb("legL", 0.22, 0.85, 0.22, -0.12, 0.85, pantsMat);
+  const legR = makeLimb("legR", 0.22, 0.85, 0.22,  0.12, 0.85, pantsMat);
+
+  // Shoes — children of the legs so they swing along
+  const shoeL = BABYLON.MeshBuilder.CreateBox(`${name}_shoeL`,
+    { width: 0.26, height: 0.08, depth: 0.32 }, scene);
+  shoeL.position = new BABYLON.Vector3(0, -0.81, 0.05);  // bottom of leg + slight forward
+  shoeL.material = shoeMat;
+  shoeL.parent = legL.pivot;
+
+  const shoeR = BABYLON.MeshBuilder.CreateBox(`${name}_shoeR`,
+    { width: 0.26, height: 0.08, depth: 0.32 }, scene);
+  shoeR.position = new BABYLON.Vector3(0, -0.81, 0.05);
+  shoeR.material = shoeMat;
+  shoeR.parent = legR.pivot;
+
+  // Torso (shirt)
+  part("torso",  0.50, 0.60, 0.28,   0,    1.15,  0, shirtMat);
+
+  // Arms — pivots at the shoulder (~y=1.45)
+  const armL = makeLimb("armL", 0.18, 0.60, 0.22, -0.34, 1.45, shirtMat);
+  const armR = makeLimb("armR", 0.18, 0.60, 0.22,  0.34, 1.45, shirtMat);
+
+  // Hands — children of the arms so they swing along
+  const handL = BABYLON.MeshBuilder.CreateBox(`${name}_handL`,
+    { width: 0.20, height: 0.16, depth: 0.24 }, scene);
+  handL.position = new BABYLON.Vector3(0, -0.67, 0);
+  handL.material = skinMat;
+  handL.parent = armL.pivot;
+
+  const handR = BABYLON.MeshBuilder.CreateBox(`${name}_handR`,
+    { width: 0.20, height: 0.16, depth: 0.24 }, scene);
+  handR.position = new BABYLON.Vector3(0, -0.67, 0);
+  handR.material = skinMat;
+  handR.parent = armR.pivot;
+
+  // Head (cube, sits on top of torso with a small neck gap)
+  part("head",   0.46, 0.46, 0.46,   0,    1.72,  0, skinMat);
+
+  // Hair (a thin slab on top of the head, dark — simple but reads as hair)
+  const hairMat = new BABYLON.StandardMaterial(`${name}_hairMat`, scene);
+  hairMat.diffuseColor = new BABYLON.Color3(0.15, 0.10, 0.08);
+  part("hair",   0.48, 0.10, 0.48,   0,    1.96,  0, hairMat);
+
+  // Eyes (two tiny dark squares on the front of the head — sells "face" cheaply)
+  const eyeMat = new BABYLON.StandardMaterial(`${name}_eyeMat`, scene);
+  eyeMat.diffuseColor = new BABYLON.Color3(0.05, 0.05, 0.10);
+  eyeMat.emissiveColor = new BABYLON.Color3(0.05, 0.05, 0.10);
+  part("eyeL",   0.06, 0.06, 0.02,  -0.10, 1.75,  0.232, eyeMat);
+  part("eyeR",   0.06, 0.06, 0.02,   0.10, 1.75,  0.232, eyeMat);
+
+  // Stash limb pivots on root so animation code can find them
+  root._limbs = { legL: legL.pivot, legR: legR.pivot, armL: armL.pivot, armR: armR.pivot };
+
+  return root;
+}
+
+// ============================================================
+// PRESENTATION ROOM
+// ============================================================
+// Global so the meeting animation can find these positions later.
+// Each entry: { standPos: Vector3, standRotY: number } — where an agent
+// stands beside the projector screen, and which way they face.
+const PRESENTER_SPOTS = [];
+
+function buildPresentationRoom(scene, shadowGen) {
+  const roomX = 0;
+  const frontZ = ROOM.depth / 2;       // office front wall at z=8
+  const rd = 7;                         // presentation room depth
+  const rw = 8;                         // presentation room width
+  const rh = ROOM.height;
+  const backZ = frontZ + rd;            // far wall at z=15
+
+  const wallMat = new BABYLON.StandardMaterial("presRoomWallMat", scene);
+  wallMat.diffuseColor = new BABYLON.Color3(0.92, 0.90, 0.86);
+  wallMat.specularColor = new BABYLON.Color3(0, 0, 0);
+
+  const makeWall = (name, w, h, pos, rot) => {
+    const wall = BABYLON.MeshBuilder.CreatePlane(name,
+      { width: w, height: h, sideOrientation: BABYLON.Mesh.DOUBLESIDE }, scene);
+    wall.position = pos;
+    wall.rotation = rot;
+    wall.material = wallMat;
+    wall.checkCollisions = true;
+    return wall;
+  };
+
+  // Back wall (the projector screen wall) — far end of the room
+  makeWall("presWallBack", rw, rh,
+    new BABYLON.Vector3(roomX, rh / 2, backZ),
+    new BABYLON.Vector3(0, 0, 0));
+
+  // Left wall
+  makeWall("presWallLeft", rd, rh,
+    new BABYLON.Vector3(roomX - rw / 2, rh / 2, frontZ + rd / 2),
+    new BABYLON.Vector3(0, Math.PI / 2, 0));
+
+  // Right wall
+  makeWall("presWallRight", rd, rh,
+    new BABYLON.Vector3(roomX + rw / 2, rh / 2, frontZ + rd / 2),
+    new BABYLON.Vector3(0, -Math.PI / 2, 0));
+
+  // Floor
+  const presFloor = BABYLON.MeshBuilder.CreateGround("presFloor",
+    { width: rw, height: rd }, scene);
+  presFloor.position = new BABYLON.Vector3(roomX, 0, frontZ + rd / 2);
+  const presFloorMat = new BABYLON.StandardMaterial("presFloorMat", scene);
+  presFloorMat.diffuseColor = new BABYLON.Color3(0.58, 0.58, 0.60);
+  presFloorMat.specularColor = new BABYLON.Color3(0.3, 0.3, 0.32);
+  presFloorMat.specularPower = 64;
+  presFloor.material = presFloorMat;
+  presFloor.receiveShadows = true;
+
+  // Ceiling
+  const presCeiling = BABYLON.MeshBuilder.CreatePlane("presCeiling",
+    { width: rw, height: rd }, scene);
+  presCeiling.position = new BABYLON.Vector3(roomX, rh, frontZ + rd / 2);
+  presCeiling.rotation.x = Math.PI / 2;
+  const presCeilMat = new BABYLON.StandardMaterial("presCeilMat", scene);
+  presCeilMat.diffuseColor = new BABYLON.Color3(0.92, 0.91, 0.88);
+  presCeilMat.specularColor = new BABYLON.Color3(0, 0, 0);
+  presCeiling.material = presCeilMat;
+
+  // Light inside the presentation room
+  const presLight = new BABYLON.PointLight("presLight",
+    new BABYLON.Vector3(roomX, rh - 0.3, frontZ + rd / 2), scene);
+  presLight.diffuse = new BABYLON.Color3(1, 0.9, 0.75);
+  presLight.intensity = 0.6;
+  presLight.range = 10;
+
+  // Projector screen on the back wall
+  const screen = BABYLON.MeshBuilder.CreatePlane("projectorScreen",
+    { width: 5.5, height: 3 }, scene);
+  screen.position = new BABYLON.Vector3(roomX, rh / 2 + 0.3, backZ - 0.02);
+  screen.rotation = new BABYLON.Vector3(0, Math.PI, 0);
+  const screenMat = new BABYLON.StandardMaterial("projScreenMat", scene);
+  screenMat.diffuseColor = new BABYLON.Color3(0.97, 0.97, 0.98);
+  screenMat.emissiveColor = new BABYLON.Color3(0.2, 0.2, 0.22);
+  screenMat.specularColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+  screen.material = screenMat;
+
+  // Thin border around the screen
+  const borderMat = new BABYLON.StandardMaterial("screenBorderMat", scene);
+  borderMat.diffuseColor = new BABYLON.Color3(0.12, 0.12, 0.14);
+  const bw = 5.6, bh = 3.06;
+  const scy = rh / 2 + 0.3;
+  const scz = backZ - 0.01;
+  [
+    { n: "T", w: bw, h: 0.06, x: 0, y: scy + 1.5 },
+    { n: "B", w: bw, h: 0.06, x: 0, y: scy - 1.5 },
+    { n: "L", w: 0.06, h: bh, x: -2.78, y: scy },
+    { n: "R", w: 0.06, h: bh, x: 2.78, y: scy },
+  ].forEach(b => {
+    const part = BABYLON.MeshBuilder.CreateBox(`screenBorder${b.n}`,
+      { width: b.w, height: b.h, depth: 0.02 }, scene);
+    part.position = new BABYLON.Vector3(roomX + b.x, b.y, scz);
+    part.material = borderMat;
+  });
+
+  // Placeholder text on the screen
+  const screenTex = BABYLON.GUI.AdvancedDynamicTexture.CreateForMesh(screen, 1024, 512);
+  const screenContainer = new BABYLON.GUI.StackPanel();
+  screenContainer.isVertical = true;
+  screenContainer.width = "95%";
+  screenContainer.horizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
+  screenTex.addControl(screenContainer);
+
+  const placeholderText = new BABYLON.GUI.TextBlock();
+  placeholderText.text = "Waiting for presentation...";
+  placeholderText.color = "#555555";
+  placeholderText.fontSize = 48;
+  placeholderText.fontFamily = "system-ui, sans-serif";
+  placeholderText.height = "60px";
+  screenContainer.addControl(placeholderText);
+
+  window._presScreen = { mesh: screen, texture: screenTex, container: screenContainer, placeholder: placeholderText };
+
+  // Standing spots — agents line up near the screen, facing the audience (-Z = toward doorway)
+  const spotZ = backZ - 1.2;
+  const spacing = 1.6;
+  const startX = roomX - (3 * spacing) / 2;
+  for (let i = 0; i < 4; i++) {
+    PRESENTER_SPOTS.push({
+      standPos: new BABYLON.Vector3(startX + i * spacing, 0, spotZ),
+      standRotY: 0,
+    });
+  }
+}
+
+// ============================================================
+// ENVIRONMENT DECOR — plants, bins, pendant lights, signage
+// ============================================================
+// Pure decoration. None of this is interactive or logic-bearing.
+// Things like plants and pendant lights make the room feel "real" disproportionately
+// to their cost — even simple geometry reads as "office" once it's there.
+function buildEnvironmentDecor(scene, shadowGen) {
+  // ---- Pendant lights hanging from ceiling beams ----
+  // Three rows of two, between the cross-beams. Just a cone + a glowing bulb.
+  const pendantCordMat = new BABYLON.StandardMaterial("pendantCordMat", scene);
+  pendantCordMat.diffuseColor = new BABYLON.Color3(0.1, 0.1, 0.1);
+
+  const pendantShadeMat = new BABYLON.StandardMaterial("pendantShadeMat", scene);
+  pendantShadeMat.diffuseColor = new BABYLON.Color3(0.15, 0.15, 0.18);
+
+  const bulbMat = new BABYLON.StandardMaterial("bulbMat", scene);
+  bulbMat.emissiveColor = new BABYLON.Color3(1.0, 0.85, 0.55);
+  bulbMat.diffuseColor = new BABYLON.Color3(1.0, 0.85, 0.55);
+
+  const pendantPositions = [
+    [-4, 0], [4, 0],   // center row above meeting area
+    [-4, -4], [4, -4], // back row
+    [-4, 4], [4, 4],   // front row
+  ];
+  pendantPositions.forEach(([px, pz], i) => {
+    // Cord from ceiling
+    const cord = BABYLON.MeshBuilder.CreateCylinder(`pendantCord_${i}`,
+      { diameter: 0.02, height: 0.6, tessellation: 6 }, scene);
+    cord.position = new BABYLON.Vector3(px, ROOM.height - 0.3, pz);
+    cord.material = pendantCordMat;
+
+    // Conical shade
+    const shade = BABYLON.MeshBuilder.CreateCylinder(`pendantShade_${i}`,
+      { diameterTop: 0.05, diameterBottom: 0.4, height: 0.25, tessellation: 16 }, scene);
+    shade.position = new BABYLON.Vector3(px, ROOM.height - 0.7, pz);
+    shade.material = pendantShadeMat;
+
+    // Glowing bulb peeking out the bottom
+    const bulb = BABYLON.MeshBuilder.CreateSphere(`pendantBulb_${i}`,
+      { diameter: 0.18, segments: 8 }, scene);
+    bulb.position = new BABYLON.Vector3(px, ROOM.height - 0.85, pz);
+    bulb.material = bulbMat;
+  });
+
+  // ---- Plants in planters along walls ----
+  // Six plants total: three along the right wall, two near the back, one near the front.
+  // Built from a planter (terracotta cylinder), a stem (thin cylinder), and a leafy
+  // crown (sphere with a slight green emissive).
+  const plantPositions = [
+    { x:  9.0, z: -5 },
+    { x:  9.0, z:  0 },
+    { x:  9.0, z:  5 },
+    { x: -3,   z: -7.2 },   // along the back wall (between desks and meeting)
+    { x:  3,   z: -7.2 },
+    { x:  0,   z:  7.2 },   // near the front entrance
+  ];
+  plantPositions.forEach((p, i) => buildPlant(scene, `plant_${i}`, p.x, p.z, shadowGen));
+
+  // ---- Trash bins in two corners ----
+  buildBin(scene, "bin1", -9.2, 7.2);
+  buildBin(scene, "bin2",  9.2, 7.2);
+
+  // ---- Bookshelf along the back wall (right of the sign) ----
+  buildBookshelf(scene, 6, -ROOM.depth / 2 + 0.3);
+}
+
+// Single plant — designed to look like a tall office plant (similar to a
+// dracaena or snake plant). Built from a planter, a central stem, and a
+// cluster of upward-pointing leaf "blades" — each a thin elongated box,
+// rotated outward. Way more believable than a ball-on-a-stick.
+function buildPlant(scene, name, x, z, shadowGen) {
+  // ---- Planter (terracotta/dark cylinder) ----
+  const planterMat = new BABYLON.StandardMaterial(`${name}_planterMat`, scene);
+  planterMat.diffuseColor = new BABYLON.Color3(0.28, 0.28, 0.30);  // dark grey planter
+  planterMat.specularColor = new BABYLON.Color3(0.2, 0.2, 0.2);
+
+  const planter = BABYLON.MeshBuilder.CreateCylinder(`${name}_planter`,
+    { diameterTop: 0.55, diameterBottom: 0.42, height: 0.55, tessellation: 16 }, scene);
+  planter.position = new BABYLON.Vector3(x, 0.275, z);
+  planter.material = planterMat;
+  planter.checkCollisions = true;
+  shadowGen.addShadowCaster(planter);
+
+  // Soil cap (so you don't see down into the planter)
+  const soilMat = new BABYLON.StandardMaterial(`${name}_soilMat`, scene);
+  soilMat.diffuseColor = new BABYLON.Color3(0.18, 0.12, 0.08);
+  const soil = BABYLON.MeshBuilder.CreateCylinder(`${name}_soil`,
+    { diameter: 0.50, height: 0.04, tessellation: 16 }, scene);
+  soil.position = new BABYLON.Vector3(x, 0.55, z);
+  soil.material = soilMat;
+
+  // ---- Foliage materials (two greens for variation) ----
+  const leafMatDark = new BABYLON.StandardMaterial(`${name}_leafDark`, scene);
+  leafMatDark.diffuseColor = new BABYLON.Color3(0.18, 0.40, 0.20);
+  leafMatDark.specularColor = new BABYLON.Color3(0.05, 0.10, 0.05);
+
+  const leafMatLight = new BABYLON.StandardMaterial(`${name}_leafLight`, scene);
+  leafMatLight.diffuseColor = new BABYLON.Color3(0.30, 0.55, 0.28);
+  leafMatLight.specularColor = new BABYLON.Color3(0.05, 0.10, 0.05);
+
+  // ---- Leaf blades ----
+  // 12-14 blades arranged in a roughly fountain shape: each is an elongated
+  // box, anchored at the soil, tilted outward at varying angles, and slightly
+  // varying in length. Some are darker green, some lighter, for depth.
+  const bladeCount = 14;
+  for (let i = 0; i < bladeCount; i++) {
+    // Distribute angles around the soil with some randomness
+    const angle = (i / bladeCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.3;
+    const tilt = 0.15 + Math.random() * 0.35;       // 8.5° to 28° outward
+    const length = 1.0 + Math.random() * 0.6;       // 1.0 to 1.6 long
+    const isLight = Math.random() < 0.4;
+
+    const blade = BABYLON.MeshBuilder.CreateBox(`${name}_blade_${i}`,
+      { width: 0.08, height: length, depth: 0.02 }, scene);
+    blade.material = isLight ? leafMatLight : leafMatDark;
+
+    // Position so the blade's base sits at the soil surface, and the blade
+    // points outward + upward. We use a TransformNode to handle the
+    // base-pivot rotation cleanly.
+    const blade_pivot = new BABYLON.TransformNode(`${name}_blade_pivot_${i}`, scene);
+    blade_pivot.position = new BABYLON.Vector3(x, 0.57, z);
+    blade_pivot.rotation.y = angle;
+    blade_pivot.rotation.z = tilt;  // tilt outward in local frame after Y-rotation
+
+    blade.parent = blade_pivot;
+    blade.position.y = length / 2;  // base at pivot, top at +length
+
+    shadowGen.addShadowCaster(blade);
+  }
+}
+
+// Simple cylindrical waste bin
+function buildBin(scene, name, x, z) {
+  const binMat = new BABYLON.StandardMaterial(`${name}_mat`, scene);
+  binMat.diffuseColor = new BABYLON.Color3(0.25, 0.25, 0.28);
+  binMat.specularColor = new BABYLON.Color3(0.4, 0.4, 0.4);
+  binMat.specularPower = 64;
+
+  const body = BABYLON.MeshBuilder.CreateCylinder(`${name}_body`,
+    { diameterTop: 0.35, diameterBottom: 0.30, height: 0.55, tessellation: 16 }, scene);
+  body.position = new BABYLON.Vector3(x, 0.275, z);
+  body.material = binMat;
+  body.checkCollisions = true;
+
+  // Rim ring on top
+  const rim = BABYLON.MeshBuilder.CreateTorus(`${name}_rim`,
+    { diameter: 0.36, thickness: 0.025, tessellation: 16 }, scene);
+  rim.position = new BABYLON.Vector3(x, 0.555, z);
+  rim.material = binMat;
+}
+
+// Bookshelf against the back wall — provides background interest from the meeting view
+function buildBookshelf(scene, x, z) {
+  const wood = new BABYLON.StandardMaterial("bookshelfMat", scene);
+  wood.diffuseColor = new BABYLON.Color3(0.45, 0.32, 0.22);
+
+  // Frame: two side panels, top, bottom, three shelves
+  const w = 1.6, h = 2.2, d = 0.35;
+  const frame = new BABYLON.TransformNode("bookshelf", scene);
+  frame.position = new BABYLON.Vector3(x, 0, z);
+
+  const sideL = BABYLON.MeshBuilder.CreateBox("bsSideL",
+    { width: 0.04, height: h, depth: d }, scene);
+  sideL.position = new BABYLON.Vector3(-w / 2, h / 2, 0);
+  sideL.material = wood;
+  sideL.parent = frame;
+
+  const sideR = BABYLON.MeshBuilder.CreateBox("bsSideR",
+    { width: 0.04, height: h, depth: d }, scene);
+  sideR.position = new BABYLON.Vector3(w / 2, h / 2, 0);
+  sideR.material = wood;
+  sideR.parent = frame;
+
+  for (let i = 0; i < 4; i++) {
+    const shelf = BABYLON.MeshBuilder.CreateBox(`bsShelf_${i}`,
+      { width: w, height: 0.04, depth: d }, scene);
+    shelf.position = new BABYLON.Vector3(0, (i / 3) * h, 0);
+    shelf.material = wood;
+    shelf.parent = frame;
+  }
+
+  // Books on the shelves — random colors, varying heights, gives texture
+  const bookColors = [
+    new BABYLON.Color3(0.7, 0.3, 0.3),
+    new BABYLON.Color3(0.3, 0.5, 0.7),
+    new BABYLON.Color3(0.8, 0.6, 0.2),
+    new BABYLON.Color3(0.4, 0.6, 0.4),
+    new BABYLON.Color3(0.5, 0.4, 0.6),
+    new BABYLON.Color3(0.7, 0.5, 0.4),
+  ];
+  for (let shelf = 0; shelf < 3; shelf++) {
+    let bx = -w / 2 + 0.1;
+    while (bx < w / 2 - 0.1) {
+      const bw = 0.06 + Math.random() * 0.04;
+      const bh = 0.25 + Math.random() * 0.15;
+      const book = BABYLON.MeshBuilder.CreateBox(`bsBook_${shelf}_${bx}`,
+        { width: bw, height: bh, depth: 0.22 }, scene);
+      book.position = new BABYLON.Vector3(bx + bw / 2, (shelf / 3) * h + bh / 2 + 0.025, 0);
+      const bookMat = new BABYLON.StandardMaterial(`bsBookMat_${shelf}_${bx}`, scene);
+      bookMat.diffuseColor = bookColors[Math.floor(Math.random() * bookColors.length)];
+      book.material = bookMat;
+      book.parent = frame;
+      bx += bw + 0.005;
+    }
+  }
+}
+
+// ============================================================
+// CAMERA HELPERS
+// ============================================================
+function focusOnAgent(camera, avatar) {
+  // Smoothly move camera target to the agent's chest (root is at feet, chest is +1.3)
+  const targetPos = avatar.absolutePosition.clone();
+  targetPos.y = 1.3;
+  animateVector(camera, "target", camera.target.clone(), targetPos, 30);
+}
+
+function animateVector(node, prop, from, to, frames) {
+  const anim = new BABYLON.Animation(
+    "vec_" + prop,
+    prop,
+    30,
+    BABYLON.Animation.ANIMATIONTYPE_VECTOR3,
+    BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT
+  );
+  anim.setKeys([
+    { frame: 0,      value: from },
+    { frame: frames, value: to },
+  ]);
+  // Easing makes it feel less robotic
+  const ease = new BABYLON.CubicEase();
+  ease.setEasingMode(BABYLON.EasingFunction.EASINGMODE_EASEINOUT);
+  anim.setEasingFunction(ease);
+
+  node.animations = node.animations || [];
+  node.animations.push(anim);
+  node.getScene().beginAnimation(node, 0, frames, false, 1, () => {
+    // Clean up so animations array doesn't grow forever
+    node.animations = node.animations.filter(a => a !== anim);
+  });
+}
+
+// ============================================================
+// STUB UI WIRING (so buttons don't feel dead — but no real logic)
+// ============================================================
+document.getElementById("btnResearch").addEventListener("click", () => {
+  const company = document.getElementById("taskInput").value.trim();
+  if (!company) {
+    alert("Type a company name first.");
+    return;
+  }
+  console.log(`[STUB] Research started for: ${company}`);
+  console.log("[STUB] On hackathon day: send WebSocket event { type: 'start_research', company } to backend");
+});
+
+document.getElementById("btnMeeting").addEventListener("click", () => {
+  if (!window._office) return;
+  if (window._office.meetingInProgress) {
+    console.log("Meeting already in progress");
+    return;
+  }
+  startMeetingAnimation();
+});
+
+// ============================================================
+// MEETING ANIMATION
+// ============================================================
+// When called, each agent walks from their desk position to a chair.
+// Walking is composed of two simultaneous things:
+//   1. Translation: position interpolates from start to chair over N frames.
+//      The path is "L-shaped" via a midpoint, so they walk in straight lines
+//      (looks more natural than a diagonal cut through furniture).
+//   2. Limb swing: legs and arms rotate back-and-forth via sin(time) so
+//      they look like they're walking, not gliding.
+// On arrival, we cancel the limb swing and stop position updates.
+
+function startMeetingAnimation() {
+  const office = window._office;
+  office.meetingInProgress = true;
+  console.log("Meeting starting — agents walking to presentation room");
+
+  office.agents.forEach((entry, i) => {
+    const spot = office.presenterSpots[i % office.presenterSpots.length];
+    walkAgentToSpot(entry.avatar, spot);
+  });
+
+  // ON HACKATHON DAY: replace the stub timeout below with backend-driven
+  // presentations. Real flow will be:
+  //   const meeting = await fetch(`/meeting/${sessionId}`).json();
+  //   for (const p of meeting.presentations) {
+  //     await window._office.addPresentation(p.agent_id, p.content);
+  //   }
+  //
+  // Until then, after agents arrive (~5s), stage demo presentations
+  // so we can verify the panel works end-to-end.
+  setTimeout(async () => {
+    await runStubPresentations();
+  }, 5500);
+}
+
+// Stub demo data — proves the panel works. DELETE on hackathon day, replace
+// with real backend-driven presentations (see comment in startMeetingAnimation).
+async function runStubPresentations() {
+  const stub = [
+    { id: "market",      text: "Tesla operates in a rapidly expanding electric vehicle market, projected to reach $1.1 trillion by 2030. They hold roughly 12% global EV market share, with strongest position in North America. Customer base skews high-income early adopters but is broadening as price points drop." },
+    { id: "financial",   text: "Q3 revenue was $25.2B, up 8% year-over-year. Gross margin compressed to 17.9% from price cuts, but free cash flow remains positive at $2.7B. Cash reserves of $33B provide significant runway. Valuation at ~75x earnings is rich versus auto peers, reasonable versus tech." },
+    { id: "competitive", text: "Direct competition intensifying — BYD now outsells Tesla globally, Rivian and Lucid carve premium niches, legacy automakers (Ford, GM) finally shipping competitive EVs. Tesla's moat: vertical integration, charging network, software margins. Risk: software lead is narrowing." },
+    { id: "esg",         text: "Environmental positioning strong on product but mixed on operations — battery sourcing under scrutiny, factory water usage flagged in Texas. Governance concerns around board independence and CEO time allocation. Reputation polarized but high engagement." },
+  ];
+  for (const p of stub) {
+    await window._office.addPresentation(p.id, p.text);
+  }
+}
+
+function walkAgentToSpot(avatar, spot) {
+  const scene = avatar.getScene();
+
+  if (avatar._bobAnim) {
+    avatar._bobAnim.stop();
+    avatar._bobAnim = null;
+  }
+  avatar.position.y = 0;
+
+  const startPos = avatar.position.clone();
+  const targetPos = spot.standPos.clone();
+  const targetRotY = spot.standRotY;
+
+  const doorPos = new BABYLON.Vector3(0, 0, ROOM.depth / 2 + 0.5);
+
+  const limbs = avatar._limbs;
+  let walkPhase = 0;
+  let walking = true;
+  const swingObs = scene.onBeforeRenderObservable.add(() => {
+    if (!walking) return;
+    walkPhase += 0.18;
+    const swing = Math.sin(walkPhase) * 0.6;
+    if (limbs) {
+      limbs.legL.rotation.x =  swing;
+      limbs.legR.rotation.x = -swing;
+      limbs.armL.rotation.x = -swing * 0.7;
+      limbs.armR.rotation.x =  swing * 0.7;
+    }
+  });
+
+  const SPEED = 2.0;
+  const faceTowards = (from, to) => {
+    const dx = to.x - from.x;
+    const dz = to.z - from.z;
+    return Math.atan2(dx, dz);
+  };
+
+  const dist1 = BABYLON.Vector3.Distance(startPos, doorPos);
+  const dist2 = BABYLON.Vector3.Distance(doorPos, targetPos);
+  const frames1 = Math.max(20, Math.round((dist1 / SPEED) * 30));
+  const frames2 = Math.max(20, Math.round((dist2 / SPEED) * 30));
+
+  avatar.rotation.y = faceTowards(startPos, doorPos);
+
+  animatePosition(avatar, startPos, doorPos, frames1, () => {
+    avatar.rotation.y = faceTowards(doorPos, targetPos);
+
+    animatePosition(avatar, doorPos, targetPos, frames2, () => {
+      avatar.rotation.y = targetRotY;
+
+      walking = false;
+      scene.onBeforeRenderObservable.remove(swingObs);
+      if (limbs) {
+        limbs.legL.rotation.x = 0;
+        limbs.legR.rotation.x = 0;
+        limbs.armL.rotation.x = 0;
+        limbs.armR.rotation.x = 0;
+      }
+    });
+  });
+}
+
+// Position animation helper — uses BABYLON.Animation under the hood with easing
+function animatePosition(node, from, to, frames, onComplete) {
+  const anim = new BABYLON.Animation("walkPos", "position", 30,
+    BABYLON.Animation.ANIMATIONTYPE_VECTOR3,
+    BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+  anim.setKeys([
+    { frame: 0, value: from.clone() },
+    { frame: frames, value: to.clone() },
+  ]);
+  // No easing — constant speed looks more like walking
+  node.animations = node.animations || [];
+  // Filter out any existing position animations to avoid stacking
+  node.animations = node.animations.filter(a => a.targetProperty !== "position");
+  node.animations.push(anim);
+  node.getScene().beginAnimation(node, 0, frames, false, 1, onComplete);
+}
+
+// Rotation animation helper (around X axis) — used for limb bending into sit pose
+function animateRotationX(node, fromR, toR, frames) {
+  const anim = new BABYLON.Animation("rotX", "rotation.x", 30,
+    BABYLON.Animation.ANIMATIONTYPE_FLOAT,
+    BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+  anim.setKeys([
+    { frame: 0, value: fromR },
+    { frame: frames, value: toR },
+  ]);
+  const ease = new BABYLON.CubicEase();
+  ease.setEasingMode(BABYLON.EasingFunction.EASINGMODE_EASEOUT);
+  anim.setEasingFunction(ease);
+  node.animations = node.animations || [];
+  node.animations.push(anim);
+  node.getScene().beginAnimation(node, 0, frames, false, 1);
+}
+
+// Y-only animation (for the "sitting down" hop)
+function animateY(node, fromY, toY, frames) {
+  const anim = new BABYLON.Animation("sitY", "position.y", 30,
+    BABYLON.Animation.ANIMATIONTYPE_FLOAT,
+    BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+  anim.setKeys([
+    { frame: 0, value: fromY },
+    { frame: frames, value: toY },
+  ]);
+  const ease = new BABYLON.CubicEase();
+  ease.setEasingMode(BABYLON.EasingFunction.EASINGMODE_EASEOUT);
+  anim.setEasingFunction(ease);
+  node.animations = node.animations || [];
+  node.animations.push(anim);
+  node.getScene().beginAnimation(node, 0, frames, false, 1);
+}
+
+// ============================================================
+// PROJECTOR SCREEN PRESENTATION LOGIC
+// ============================================================
+function getAgentMeta(agentId) {
+  if (!window._office) return { name: agentId, color: "#888" };
+  const entry = window._office.agents.find(a => a.agent.id === agentId);
+  if (!entry) return { name: agentId, color: "#888" };
+  const c = entry.agent.color;
+  return { name: entry.agent.name, color: `rgb(${Math.round(c.r * 255)}, ${Math.round(c.g * 255)}, ${Math.round(c.b * 255)})` };
+}
+
+function showTranscriptPanel() {}
+function hideTranscriptPanel() {}
+
+function addPresentationCard(agentId, fullText) {
+  const ps = window._presScreen;
+  if (!ps) return Promise.resolve();
+  const meta = getAgentMeta(agentId);
+
+  if (ps.placeholder) {
+    ps.container.removeControl(ps.placeholder);
+    ps.placeholder = null;
+  }
+  ps.container.clearControls();
+
+  const title = new BABYLON.GUI.TextBlock();
+  title.text = meta.name;
+  title.color = meta.color;
+  title.fontSize = 40;
+  title.fontFamily = "system-ui, sans-serif";
+  title.fontWeight = "bold";
+  title.height = "50px";
+  title.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+  title.paddingLeft = "20px";
+  title.paddingTop = "10px";
+  ps.container.addControl(title);
+
+  const body = new BABYLON.GUI.TextBlock();
+  body.text = "";
+  body.color = "#222222";
+  body.fontSize = 26;
+  body.fontFamily = "system-ui, sans-serif";
+  body.textWrapping = true;
+  body.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_LEFT;
+  body.textVerticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+  body.height = "400px";
+  body.paddingLeft = "20px";
+  body.paddingRight = "20px";
+  body.paddingTop = "10px";
+  ps.container.addControl(body);
+
+  const baseDelay = fullText.length > 400 ? 8 : 18;
+
+  return new Promise((resolve) => {
+    let i = 0;
+    function typeNext() {
+      if (i >= fullText.length) { resolve(); return; }
+      body.text = fullText.slice(0, i + 1);
+      i++;
+      const ch = fullText[i - 1];
+      const delay = (ch === "." || ch === "!" || ch === "?") ? baseDelay * 6 :
+                    (ch === "," || ch === ";")               ? baseDelay * 3 : baseDelay;
+      setTimeout(typeNext, delay);
+    }
+    typeNext();
+  });
+}
+
+// ============================================================
+// BOOTSTRAP
+// ============================================================
+const scene = createScene();
+
+engine.runRenderLoop(() => scene.render());
+window.addEventListener("resize", () => engine.resize());
+
+// Useful for debugging in browser console
+window._scene = scene;
+window._engine = engine;
+</script>
+
+</body>
+</html>
