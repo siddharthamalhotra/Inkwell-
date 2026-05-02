@@ -21,6 +21,18 @@ jobs:
       - name: Install dependencies
         run: pip install anthropic pymongo python-dotenv boto3
 
+      - name: Verify secrets are set
+        env:
+          MONGODB_URI: ${{ secrets.MONGODB_URI }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        run: |
+          python -c "
+          import os
+          for k in ['MONGODB_URI', 'ANTHROPIC_API_KEY', 'AWS_ACCESS_KEY_ID']:
+              v = os.environ.get(k, '')
+              print(f'{k}: {\"SET (\" + str(len(v)) + \" chars)\" if v else \"EMPTY\"}')"
+
       - name: Generate wiki and update MongoDB
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
