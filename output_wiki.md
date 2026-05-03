@@ -1,329 +1,150 @@
 # Inkwell
 
-> *Living documentation for any codebase — auto-generated, semantically searchable, and always in sync.*
+## TL;DR
+
+Inkwell is a multi-agent documentation system that turns any GitHub repository into a living, searchable wiki — automatically. Three specialized AI agents (Cartographer, Historian, and Synthesis) run in parallel to map a codebase's architecture, mine its git history, and weave both into polished Markdown documentation with onboarding guides, deep dives, and architectural analysis. The result is stored in MongoDB, rendered in a single-page web app, and made queryable through hybrid semantic + full-text search and an interactive agentic chat interface. Built for developers who need to onboard fast or understand an unfamiliar codebase without reading every file.
 
 ---
 
-## TL;DR (the pitch)
-
-Inkwell is a **multi-agent documentation system** that points at any public GitHub repo and produces a comprehensive, beautiful wiki in minutes — then makes it permanently searchable. Give it a URL; it clones the repo and simultaneously dispatches three specialist AI agents: the **Cartographer** (maps structure), the **Historian** (reads git log to explain *why* things exist), and the **Translator** (writes docs for three audiences — pitch, onboarding, deep dive). A fourth **Synthesis** agent consolidates all three outputs into a polished Markdown wiki. Every section is embedded via AWS Bedrock Titan and stored in MongoDB Atlas, enabling hybrid semantic + keyword search over your generated docs. Inkwell is for engineering teams who are tired of documentation rotting on a shelf — the wiki regenerates automatically on every merge, and you can query it the same way you'd ask a senior engineer: *"Where does authentication happen?"*
-
----
-
-## Architecture (the map)
+## Architecture
 
 ```
-Inkwell/
-│
-├── app.py                        ← Web entrypoint (Flask). Routes: GET /, GET /generate (SSE),
-│                                   POST /search. Normalises GitHub URLs, streams progress events.
-│
-├── agent.py                      ← Orchestration brain. Clones repo, spawns three specialist
-│   │                               Claude agents in parallel, pipes outputs to Synthesis,
-│   │                               returns final Markdown wiki. Also wires save/search to MongoDB.
-│   │
-│   ├── [Cartographer agent]      ← Reads file tree + key files → JSON structural map
-│   ├── [Historian agent]         ← Reads git log → JSON origin story + scar tissue
-│   ├── [Translator agent]        ← Takes map + history → pitch / onboarding / deep docs
-│   └── [Synthesis agent]         ← Consolidates all three → final README-style wiki
-│
-├── mongo_store.py                ← Data layer. Embeds text via AWS Bedrock Titan (1536-dim),
-│                                   persists to MongoDB Atlas, executes $rankFusion hybrid search
-│                                   (70% vector + 30% BM25 keyword).
-│
-├── index.html                    ← Frontend SPA. Dark-themed, vanilla JS + Marked.js.
-│                                   Form → SSE progress stream → rendered wiki → search UI.
-│
-├── requirements.txt              ← anthropic, pymongo, boto3, flask, python-dotenv
-│
-├── check_db.py                   ← Debug utility: counts docs, prints section previews.
-├── cleanup.py                    ← Maintenance utility: deletes docs by repo URL.
-├── test.py                       ← Integration tests
-├── test_mongo.py                 ← MongoDB-specific tests
-├── output_wiki.md                ← Last auto-generated wiki (committed by CI runner)
-│
-└── .github/
-    └── workflows/
-        └── update-wiki.yml       ← CI/CD: regenerates wiki + commits output_wiki.md on every
-                                    push to main. Requires ANTHROPIC_API_KEY, AWS_*, MONGODB_URI
-                                    in GitHub Secrets.
+inkwell/
+├── app.py              # Flask web server — routes, SSE streaming, rate limiting (~200 lines)
+├── agent.py            # All agent logic — Cartographer, Historian, Synthesis, agentic chat (~600 lines)
+├── mongo_store.py      # MongoDB persistence, hybrid search, Bedrock embeddings, fallback store (~250 lines)
+└── index.html          # Vanilla JS SPA — SSE handling, marked.js rendering, search & chat UI (~500 lines)
 ```
 
-**Data flow:**
+### Agent Pipeline
+
 ```
-POST /generate?url=<github_url>
-      │
-      ▼
-  app.py  ──clone──▶  agent.py
-                          │
-                 ┌────────┴────────┐
-                 ▼                 ▼
-           Cartographer       Historian        (parallel, claude-haiku)
-                 └────────┬────────┘
-                          ▼
-                      Translator               (sequential, claude-haiku)
-                          ▼
-                       Synthesis               (claude-sonnet, polished output)
-                          │
-              ┌───────────┴────────────┐
-              ▼                        ▼
-        mongo_store.py           SSE → index.html
-     (embed + persist)          (render markdown)
+GitHub URL
+  └─► clone_repo (shallow, --depth 20)
+        ├─► [parallel] run_cartographer()   →  JSON architectural map
+        └─► [parallel] run_historian()      →  JSON git narrative
+                ↓ (both complete)
+        run_synthesis()  →  streamed Markdown wiki
+                ↓
+        save_doc()  →  MongoDB (sections + embeddings + raw files + git logs)
+                ↓
+        UI renders progressively
+        └─► /chat  →  agentic chat with live repo tool access
 ```
+
+### Key Component Relationships
+
+| Layer | Component | Responsibility |
+|---|---|---|
+| Ingestion | `clone_repo` in `agent.py` | Shallow-clones repo, scopes tools to that directory |
+| Analysis | Cartographer (Claude Haiku) | Structure, files, dependencies |
+| Analysis | Historian (Claude Haiku) | Git log, commit narrative, pivots |
+| Synthesis | Synthesis agent (Claude Sonnet) | Merge both inputs into final wiki |
+| Persistence | `mongo_store.py` | Sections, embeddings, file contents, git logs |
+| Search | `$rankFusion` (MongoDB) | 70% semantic + 30% full-text |
+| Chat | `agent.py` `/chat` route | Multi-turn reasoning over stored wiki + live repo tools |
 
 ---
 
 ## Onboarding Guide
 
-### What You Need Before You Start
+**Welcome. Here's how to navigate this codebase in five minutes.**
 
-| Requirement | Notes |
-|---|---|
-| Python 3.12+ | Tested on 3.13; `match` syntax used in places |
-| `git` on PATH | Agent shells out to `git clone` and `git log` |
-| Anthropic API key | Haiku for agents, Sonnet for synthesis |
-| AWS credentials | Bedrock Titan for embeddings (`us-east-1` default) |
-| MongoDB Atlas URI | With Atlas Search indexes configured (see below) |
+### The Spine Files
 
-### Installation
+There are four files. That's the entire backend+frontend. Start here:
 
-```bash
-git clone https://github.com/siddharthamalhotra/Inkwell-
-cd Inkwell-
-pip install -r requirements.txt
-```
+1. **`agent.py`** — This is the brain. Everything about how agents think, loop, dispatch tools, and generate wikis lives here. When you want to understand *what Inkwell does*, read `agent.py`. Pay attention to `_make_tool_dispatch(repo_dir)` — it creates closures scoped to a cloned repo so tools can't escape their sandbox. The multi-turn agent loop pattern repeats for all three agents.
 
-Create a `.env` file at the root:
+2. **`app.py`** — The thin web layer. Flask routes, SSE streaming setup, rate limiting (5 generations/IP/hour), and repo cache (`_repo_cache`, 1-hour TTL). Don't look here for business logic — it delegates immediately to `agent.py`.
 
-```dotenv
-ANTHROPIC_API_KEY=sk-ant-...
-SYNTHESIS_MODEL=claude-sonnet-4-6      # optional override
+3. **`mongo_store.py`** — Persistence and search. The most operationally interesting file. Read `save_doc()` to understand how wiki sections are stored, and `search_docs()` to understand `$rankFusion`. There is an in-memory `_memory` dict fallback — if MongoDB is down, the system still works.
 
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-AWS_REGION=us-east-1
+4. **`index.html`** — A self-contained SPA. Handles SSE event streams from the server, renders Markdown via `marked.js`, and wires up the search and chat UI. No build step, no framework.
 
-MONGODB_URI=mongodb+srv://...
-MONGODB_DB=inkwell
-MONGODB_COLLECTION=docs
-```
+### Key Concepts to Internalize
 
-### MongoDB Atlas Setup
-
-Before running, your Atlas cluster needs two Search indexes on the `docs` collection:
-
-1. **`docs_vector_index`** — a Vector Search index on the `embedding` field (1536 dimensions, cosine similarity).
-2. **`docs_text_index`** — a full-text Atlas Search index on the `text` field.
-
-Without these, `mongo_store.py`'s `$rankFusion` pipeline will error.
-
-### Running Locally
-
-**Option A — Web UI (recommended):**
-```bash
-python app.py
-# → http://localhost:5001
-```
-Paste a GitHub URL, click **Generate**, watch the SSE progress stream, read the wiki, search it.
-
-**Option B — CLI:**
-```bash
-python agent.py https://github.com/owner/repo
-# outputs to stdout + saves to output_wiki.md
-```
-
-**Option C — Verify DB is working:**
-```bash
-python check_db.py     # inspect stored docs
-python cleanup.py      # delete test docs
-```
-
-### The Five Files You Must Read First
-
-1. **`agent.py`** — start here; understand the four-agent pipeline and the `generate_wiki()` orchestrator
-2. **`app.py`** — the web layer; see how SSE streaming works and how URLs are normalised
-3. **`mongo_store.py`** — the persistence layer; understand `_embed()` and the `$rankFusion` pipeline
-4. **`index.html`** — the UI; EventSource handling, Marked.js rendering, search form
-5. **`requirements.txt`** — minimal deps, no framework magic to learn
+- **Tool Dispatch**: Every agent gets a set of tools (`list_files`, `read_file`, `git_log`) scoped to one cloned repo via closures. No globals.
+- **Prompt Caching**: System prompts use `cache_control: {"type": "ephemeral"}` — this is a Claude API feature that reduces cost and latency across multi-turn loops. Don't remove it.
+- **SSE Streaming**: Wiki text streams chunk-by-chunk from Synthesis. The frontend listens for named events and appends progressively.
+- **Parallel Execution**: Cartographer and Historian use `ThreadPoolExecutor` and run at the same time. Synthesis waits for both via `Future.result()`.
 
 ### What NOT to Touch Yet
 
-- **The agent system prompts** in `agent.py` — they are carefully tuned; small wording changes alter output quality significantly.
-- **The `$rankFusion` weights** in `mongo_store.py` — `0.7 vector / 0.3 BM25` was calibrated empirically; changing them without testing degrades search relevance.
-- **The CI workflow** — it has secrets and permission requirements that are easy to break silently (see *The Story* section).
+- The `$rankFusion` aggregation pipeline in `mongo_store.py` — it's finely tuned; the 70/30 semantic/full-text split is deliberate.
+- Agent system prompts in `agent.py` — they were carefully compressed after hitting Claude's token limits. Adding verbosity will break things.
+- The SSE event format — `index.html` parses specific named event types; changing the server-side format without updating the client breaks rendering.
 
 ---
 
 ## The Story
 
-### Origin — May 2, 2026, ~13:42
+Inkwell was created by Siddhartha Malhotra in early May 2026, conceived in a burst of activity over roughly 36 hours.
 
-Siddhartha Malhotra pushed the first meaningful commit: **"inkwell agent orchestrator added."** The core idea was already fully formed — three specialist agents with different lenses on the same codebase, a synthesis pass to unify them. This multi-perspective architecture became the DNA that everything else was built around.
+**May 2, 13:42 — The vision arrives whole.** The initial commit established the three-agent pipeline immediately. There was no "let's start with one LLM and see" phase — the architecture was born with specialization and parallelism as first principles. Cartographer maps structure. Historian mines history. Synthesis narrates. This division of labor was the founding idea.
 
-### The Persistence Pivot — 13:49
+**May 2, 13:46–15:46 — The database becomes non-negotiable.** Within hours of the first commit, MongoDB Atlas was wired in and token limit fixes were applied. The agents were hitting context walls, and git history was too large to re-fetch on every run. The solution: persist everything in MongoDB. Git logs, file contents, wiki sections — all stored so agents don't have to re-derive what they've already learned.
 
-Within minutes, Mario Cavicchioli added `mongo_store.py`, `cleanup.py`, and a `.gitignore`. This was the project's first major architectural decision: transform Inkwell from a one-shot CLI tool that printed Markdown and vanished into a **persistent, searchable documentation system**. Without this pivot, every wiki generation would be ephemeral.
+**May 2, 16:22 — Speed becomes a hard requirement.** Early runs were sequential with deliberate pauses. Once the concept was validated, a performance overhaul parallelized the agents, removed the sleeps, and switched from a larger model to Claude Haiku for the analysis agents. This was an explicit cost-latency tradeoff: Haiku runs cheaper and faster; Sonnet is reserved for the final synthesis where quality matters most.
 
-### Stability — 15:46
+**May 2, 16:58 — Proof of concept becomes product.** With the pipeline stable, a web UI shipped. The system crossed the line from internal tool to something a user could actually interact with.
 
-`"Wire MongoDB + fix agent token limits"` — a single commit that quietly solved two production blockers. The agents were hitting token ceilings and failing silently; the database integration wasn't wired end-to-end. This is the commit that made Inkwell actually work in practice.
-
-### The Performance Crisis — 16:22
-
-`"Speed up agent pipeline: parallel agents, remove sleeps, use Haiku"` — by mid-afternoon the team had discovered that running agents sequentially with expensive models and artificial sleep delays made the pipeline unusably slow. The fix was threefold:
-
-1. **Parallelise** Cartographer + Historian using `ThreadPoolExecutor`
-2. **Drop sleeps** (a common Claude API rate-limit workaround that wasn't needed)
-3. **Switch to `claude-haiku`** for the three specialist agents — Sonnet is reserved only for the final synthesis pass where polish matters
-
-The result: the `AGENT_MODEL` / `SYNTHESIS_MODEL` split visible in `agent.py` today is a direct fossil of this crisis.
-
-### The Web Layer — 16:58
-
-Sid added `app.py` — the Flask web interface that completed the full user journey: URL in → wiki out → search. Before this, Inkwell was a developer tool; after it, it was a product.
-
-### CI Growing Pains — 15:52–16:25
-
-The automation story unfolded in a tight cluster of commits:
-
-| Commit | What happened |
-|---|---|
-| `661b9fc` | GitHub Actions workflow added |
-| `923a5f8` | "debug: add secrets verification step" — secrets weren't passing correctly |
-| `fb37fc6` | "Fix workflow: add contents write permission for push" — runner couldn't commit back |
-| `a23cf8a` / `412cb5c` | Auto-generated wiki commits from the now-working runner |
-
-The `[skip ci]` tag on bot commits prevents infinite regeneration loops — already in place and essential.
+**May 3, 02:49 — Batch to interactive.** The biggest pivot: agentic chat was added alongside repo snapshots. Inkwell stopped being a one-shot documentation generator and became a persistent reasoning environment. Users could now ask follow-up questions, and the chat agent could reach back into the stored repo with live tool access to answer them. Repo snapshots meant re-analysis no longer required re-cloning.
 
 ---
 
 ## Deep Dive
 
-### The Four-Agent Pipeline
+### Why Three Agents Instead of One?
 
-Inkwell's core insight is that **documentation has multiple audiences, and no single reader sees all dimensions of a codebase simultaneously**. The solution: specialist agents with constrained prompts.
+The single-LLM approach to code summarization has a well-known failure mode: it treats a codebase as a flat document rather than a multi-dimensional artifact. Architecture (what files exist, how they connect) and history (why things are the way they are) require different reading strategies. A single prompt asking "explain this repo" gets an average of both and excels at neither.
 
-```
-Cartographer  →  "What is here and how does it connect?"   (structure lens)
-Historian     →  "Why does it exist and how did it evolve?" (history lens)
-Translator    →  "How do I explain this to three audiences?" (communication lens)
-Synthesis     →  "Make it beautiful and coherent."          (polish lens)
-```
+Inkwell's answer is specialization. The Cartographer is prompted to think spatially — file trees, dependencies, data flows. The Historian is prompted to think temporally — commit messages, refactors, pivots. The Synthesis agent never sees raw files; it only sees the structured outputs of the other two, which forces it to operate at the narrative level rather than getting lost in implementation details.
 
-Each of the first three agents shares the **same tool set** (`list_files`, `read_file`, `git_log`) but is prompted to use them differently. The Cartographer is capped at ~10 file reads for breadth. The Historian is capped at 5–6 git tool calls for efficiency. The Translator is discouraged from reading files at all (it already has the map and history).
+### The Token Limit Scars
 
-**Model selection is deliberate:**
-- Haiku (agents): fast, cheap, high rate-limit headroom — fine for tool-calling loops
-- Sonnet (synthesis): slower, more expensive, better prose — justified for the one output humans actually read
+The most consequential architectural decision is invisible: git history is stored in MongoDB on first analysis and retrieved from there on subsequent runs, rather than fetched live each time. This is a direct response to early token exhaustion. Large repos have thousands of commits; feeding raw `git log` output into every agent turn is a fast way to hit context limits. The `save_git_log` / `get_git_log_db` pattern in `agent.py` is scar tissue from that lesson.
 
-### The Persistence Layer in Detail
+Similarly, agent system prompts are unusually terse for documentation-generating prompts. The compression is intentional — verbose system prompts amplified the token problem across multi-turn loops. Every word in those prompts survived a cost-benefit cut.
 
-`mongo_store.py` stores each wiki section as:
+### Prompt Caching as Infrastructure
 
-```json
-{
-  "repo_url": "https://github.com/owner/repo",
-  "section": "Architecture",
-  "text": "...",
-  "embedding": [0.023, -0.114, ...],
-  "created_at": "2026-05-02T15:36:08Z"
-}
-```
+`cache_control: {"type": "ephemeral"}` on system prompts isn't a minor optimization — it's load-bearing. Each agent runs in a multi-turn loop (Cartographer up to ~8 turns, Historian ~6). Without caching, the system prompt is billed as input tokens on every turn. With caching, it's billed once. At scale, this is the difference between an economically viable product and one that burns tokens on boilerplate.
 
-Search uses MongoDB's `$rankFusion` with two sub-pipelines:
+### The Fallback Store Pattern
 
-```python
-$rankFusion: {
-  input: {
-    pipelines: {
-      vectorPipeline: [$vectorSearch → $match],   # semantic similarity
-      textPipeline:   [$search → $match → $limit] # BM25 keyword
-    }
-  },
-  combination: {
-    weights: { vectorPipeline: 0.7, textPipeline: 0.3 }
-  }
-}
-```
+`mongo_store.py` contains both MongoDB logic and an in-memory `_memory` dict that mirrors the MongoDB interface. This isn't an accident or dead code — it's a production reliability decision. If MongoDB is unavailable (connection failure, cold start, local dev without Atlas), the system degrades gracefully rather than crashing. Search quality degrades (keyword matching instead of vector similarity), but the core generation and chat flows continue to work.
 
-This hybrid approach means a query like `"database layer"` finds both exact keyword matches *and* semantic neighbors like `"persistence module"` or `"MongoDB integration"`.
+### Hybrid Search Tuning
 
-**Known scar tissue in this layer:**
-- No idempotency: re-running on the same repo creates duplicate documents (no hash-based dedup)
-- No transaction semantics: a mid-generation crash leaves partial sections in the DB
-- Cleanup is manual via `cleanup.py` (hardcoded to test repo URL — fragile)
-- Embeddings are re-computed on every run (expensive; no caching)
-
-**Future fix:** Add an idempotency key of `hash(repo_url + commit_sha)` and upsert instead of insert.
-
-### CI/CD: Automation and Its Scars
-
-The workflow in `.github/workflows/update-wiki.yml` regenerates `output_wiki.md` on every push to `main` and commits it back. **Critical requirements** that burned the team during setup:
-
-1. `contents: write` permission must be explicitly declared — GitHub Actions defaults to read-only
-2. All three credential sets (`ANTHROPIC_API_KEY`, `AWS_*`, `MONGODB_URI`) must be in GitHub Secrets
-3. Bot commits must include `[skip ci]` to prevent infinite trigger loops (already handled)
-4. AWS Bedrock must be available in your configured region (`us-east-1` default)
+The `$rankFusion` search weights (70% semantic, 30% full-text) reflect a specific tradeoff for code documentation queries. Pure semantic search struggles with exact identifier names — class names, function names, file paths. Pure full-text search misses conceptual queries ("how does authentication work"). The 70/30 split favors conceptual understanding while keeping exact-match queries functional. This is a parameter worth tuning if recall on identifier-specific queries is poor.
 
 ### Extension Points
 
-**Add a fourth agent:**
-```python
-# In agent.py, add a new system prompt + run_agent_with_role() call
-SECURITY_AUDITOR_PROMPT = """You are the Security Auditor..."""
-
-def run_security_auditor():
-    return run_agent_with_role(SECURITY_AUDITOR_PROMPT, ...)
-```
-
-**Swap the embedding model:**
-```python
-# In mongo_store.py, replace _embed():
-# Current: AWS Bedrock Titan
-response = bedrock_client.invoke_model(modelId="amazon.titan-embed-text-v2:0", ...)
-
-# Alternative: OpenAI
-response = openai_client.embeddings.create(model="text-embedding-3-small", input=text)
-```
-
-**Tune hybrid search weights:**
-```python
-# In mongo_store.py $rankFusion combination block:
-"weights": {"vectorPipeline": 0.6, "textPipeline": 0.4}  # more keyword weight
-```
-
-**Add a Validation agent** (post-synthesis pass): check for contradictions between sections, missing file references, and orphaned claims. Route failures to a human reviewer before persistence.
-
-### Known Gotchas
-
-| Gotcha | Detail |
-|---|---|
-| **Token limits** | Agents read entire files up to 300 lines. Repos >50K lines will be silently truncated. No incremental indexing. |
-| **Shallow clone depth** | `git clone --depth 50` — only 50 commits of history visible to the Historian. Ancient repositories will have incomplete WHY analysis. |
-| **AWS region** | Bedrock Titan is not available in all regions. If embeddings fail, check `AWS_REGION` in `.env` and your Atlas configuration. |
-| **Concurrency** | Multiple simultaneous `/generate` calls share the global `REPO_DIR` variable in `agent.py` — parallel requests will corrupt each other's working directory. |
-| **Private repos** | `git clone` will fail without credentials injected. No SSH/token auth flow is implemented. |
-| **Markdown only** | Translator outputs GitHub Flavoured Markdown. Repos using Sphinx, JSDoc, or AsciiDoc conventions will get output in a different style than their existing docs. |
+- **New agents**: The agent loop pattern in `agent.py` is factored cleanly. A fourth agent (e.g., a Security Auditor or Dependency Analyst) can be added by defining a new system prompt, running it in the `ThreadPoolExecutor` alongside Cartographer and Historian, and passing its JSON output to Synthesis.
+- **New tools**: `_make_tool_dispatch(repo_dir)` returns a dict mapping tool names to callables. Adding a tool (e.g., `run_tests`, `grep_code`) means adding an entry to that dict and declaring it in the agent's tool schema.
+- **Search weights**: The 70/30 semantic/full-text ratio is a single constant in `mongo_store.py`. It is not derived from any ML process — it can be changed directly.
 
 ---
 
 ## Where to Look For Things
 
-| Concern | File(s) |
-|---|---|
-| Web server, routes, SSE streaming | `app.py` |
-| Agent prompts (Cartographer, Historian, Translator, Synthesis) | `agent.py` — `*_PROMPT` constants |
-| Agent orchestration & parallelism | `agent.py` — `generate_wiki()` |
-| Tool implementations (list_files, read_file, git_log) | `agent.py` — `TOOL_DISPATCH` and functions above it |
-| Repo cloning logic | `agent.py` — `clone_repo()` |
-| Model selection (Haiku vs Sonnet) | `agent.py` — `AGENT_MODEL`, `SYNTHESIS_MODEL` |
-| Embedding generation (AWS Bedrock Titan) | `mongo_store.py` — `_embed()` |
-| Storing wiki sections to MongoDB | `mongo_store.py` — `save_doc()` |
-| Hybrid semantic + keyword search | `mongo_store.py` — `search_docs()` / `$rankFusion` pipeline |
-| Frontend UI, SSE event handling, search form | `index.html` |
-| Markdown rendering in browser | `index.html` — Marked.js integration |
-| CI/CD wiki regeneration on merge | `.github/workflows/update-wiki.yml` |
-| Debugging MongoDB contents | `check_db.py` |
-| Deleting docs by repo URL | `cleanup.py` |
-| Python dependencies | `requirements.txt` |
-| Last auto-generated wiki output | `output_wiki.md` |
+| Concern | File | What to Read |
+|---|---|---|
+| Flask routes & SSE streaming | `app.py` | All route handlers; `Response` with `text/event-stream` |
+| Rate limiting logic | `app.py` | `_rate_store` dict and IP-based check |
+| Repo cloning & caching | `app.py` / `agent.py` | `clone_repo()`, `_repo_cache` |
+| Agent loop (multi-turn) | `agent.py` | `run_cartographer()`, `run_historian()` |
+| Parallel agent execution | `agent.py` | `ThreadPoolExecutor` block in wiki generation |
+| Tool dispatch (scoped) | `agent.py` | `_make_tool_dispatch(repo_dir)` |
+| Synthesis + streaming | `agent.py` | `run_synthesis()` with streamed Sonnet call |
+| Agentic chat | `agent.py` | `/chat` handler and its agent loop |
+| MongoDB persistence | `mongo_store.py` | `save_doc()`, `get_doc()` |
+| Hybrid search | `mongo_store.py` | `search_docs()` with `$rankFusion` |
+| In-memory fallback | `mongo_store.py` | `_memory` dict and its access patterns |
+| Bedrock embeddings | `mongo_store.py` | Embedding generation calls |
+| Git log persistence | `agent.py` + `mongo_store.py` | `save_git_log()`, `get_git_log_db()` |
+| Frontend SSE handling | `index.html` | Event listener setup and progressive rendering |
+| Markdown rendering | `index.html` | `marked.js` integration |
+| Search & chat UI | `index.html` | Search form, chat form, result display logic |
+| Agent system prompts | `agent.py` | Constants near top of file; do not pad with verbosity |
