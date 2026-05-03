@@ -36,6 +36,11 @@ html, body {
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   font-size: 15px;
   -webkit-font-smoothing: antialiased;
+  transition: padding-right 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+body.chat-open {
+  padding-right: 404px; /* 380px panel + 24px base padding */
 }
 
 /* Dot-grid background */
@@ -425,23 +430,70 @@ header {
 }
 .wiki-box hr { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
 
-/* ── Chat ─────────────────────────────────────────────── */
-#chat-section {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  overflow: hidden;
+/* ── Chat side panel ──────────────────────────────────── */
+#chat-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  height: 100vh;
+  width: 380px;
+  background: var(--surface);
+  border-left: 1px solid var(--border2);
   display: flex;
   flex-direction: column;
+  z-index: 300;
+  transform: translateX(100%);
+  transition: transform 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: -16px 0 48px rgba(0,0,0,0.5);
 }
+
+#chat-panel.open { transform: translateX(0); }
+
+/* Floating toggle button */
+#chat-toggle {
+  position: fixed;
+  bottom: 28px;
+  right: 28px;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #b060ff 0%, #7059f0 100%);
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  z-index: 200;
+  box-shadow: 0 4px 24px rgba(176,96,255,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
+}
+#chat-toggle:hover { transform: scale(1.08); box-shadow: 0 6px 32px rgba(176,96,255,0.65); }
+#chat-toggle.panel-open { opacity: 0; pointer-events: none; }
+
+/* Panel close button */
+#chat-close {
+  width: 28px; height: 28px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted2);
+  cursor: pointer;
+  margin-left: auto;
+  flex-shrink: 0;
+  transition: background 0.2s, color 0.2s;
+}
+#chat-close:hover { background: rgba(255,255,255,0.1); color: var(--text); }
 
 .chat-header {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 13px 20px;
+  padding: 13px 16px;
   border-bottom: 1px solid var(--border);
   background: rgba(255,255,255,0.02);
+  flex-shrink: 0;
 }
 
 .chat-header-icon {
@@ -460,19 +512,13 @@ header {
   letter-spacing: -0.01em;
 }
 
-.chat-header-sub {
-  font-size: 12px;
-  color: var(--muted2);
-  margin-left: auto;
-}
-
 #chat-messages {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 20px;
-  min-height: 64px;
-  max-height: 440px;
+  padding: 16px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
@@ -599,6 +645,90 @@ header {
 #chat-btn:active:not(:disabled) { transform: translateY(0); }
 #chat-btn:disabled { opacity: 0.28; cursor: not-allowed; }
 
+/* ── Auto-update setup card ───────────────────────────── */
+.autoupdate-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 24px;
+}
+
+.autoupdate-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: var(--muted2);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+
+.autoupdate-top svg { opacity: 0.6; }
+
+.autoupdate-box p {
+  font-size: 13px;
+  color: var(--muted2);
+  margin-bottom: 12px;
+  line-height: 1.6;
+}
+
+.webhook-url-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  background: var(--card);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 9px 14px;
+}
+
+.webhook-url-row code {
+  flex: 1;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  color: var(--carto);
+  word-break: break-all;
+}
+
+#copy-webhook-btn {
+  background: rgba(255,255,255,0.06);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted2);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 4px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.2s, color 0.2s;
+}
+#copy-webhook-btn:hover { background: rgba(255,255,255,0.1); color: var(--text); }
+
+.autoupdate-steps {
+  padding-left: 18px;
+  margin: 0;
+}
+
+.autoupdate-steps li {
+  font-size: 12.5px;
+  color: var(--muted2);
+  line-height: 1.7;
+  margin-bottom: 2px;
+}
+
+.autoupdate-steps code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  background: rgba(255,255,255,0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+}
+
 /* ── Utility ──────────────────────────────────────────── */
 .hidden { display: none !important; }
 </style>
@@ -699,29 +829,66 @@ header {
 
   <div class="wiki-box" id="wiki-content"></div>
 
-  <div id="chat-section">
-    <div class="chat-header">
-      <div class="chat-header-icon">
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="11" cy="11" r="8"></circle>
-          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+  <div id="autoupdate-card" class="hidden">
+    <div class="autoupdate-box">
+      <div class="autoupdate-top">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"></polyline>
+          <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
         </svg>
+        Auto-update
       </div>
-      <span class="chat-header-title">Ask the codebase</span>
-      <span class="chat-header-sub">grounded in the generated wiki</span>
-    </div>
-    <div id="chat-messages"></div>
-    <div class="chat-input-bar">
-      <input id="chat-input" placeholder="How does auth work? Where is the database layer? What should I read first?" />
-      <button id="chat-btn" title="Ask">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="22" y1="2" x2="11" y2="13"></line>
-          <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
-        </svg>
-      </button>
+      <p>Add a webhook to your GitHub repo so the wiki regenerates automatically whenever a significant commit is pushed.</p>
+      <div class="webhook-url-row">
+        <code id="webhook-url"></code>
+        <button id="copy-webhook-btn">Copy</button>
+      </div>
+      <ol class="autoupdate-steps">
+        <li>Go to your repo → <strong>Settings → Webhooks → Add webhook</strong></li>
+        <li>Paste the URL above as the <strong>Payload URL</strong></li>
+        <li>Set Content type to <code>application/json</code></li>
+        <li>Under "Which events", choose <strong>Just the push event</strong></li>
+        <li>Optionally set a Secret and add <code>WEBHOOK_SECRET=&lt;same value&gt;</code> to your <code>.env</code></li>
+      </ol>
     </div>
   </div>
 </section>
+
+<!-- Chat side panel (outside output section, fixed to viewport) -->
+<div id="chat-panel">
+  <div class="chat-header">
+    <div class="chat-header-icon">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+    </div>
+    <span class="chat-header-title">Ask the codebase</span>
+    <button id="chat-close" title="Close">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"></line>
+        <line x1="6" y1="6" x2="18" y2="18"></line>
+      </svg>
+    </button>
+  </div>
+  <div id="chat-messages"></div>
+  <div class="chat-input-bar">
+    <input id="chat-input" placeholder="How does auth work? Where is the database layer?" />
+    <button id="chat-btn" title="Ask">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="22" y1="2" x2="11" y2="13"></line>
+        <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+      </svg>
+    </button>
+  </div>
+</div>
+
+<!-- Floating chat toggle button -->
+<button id="chat-toggle" class="hidden" title="Ask the codebase">
+  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+  </svg>
+</button>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -819,10 +986,15 @@ function handleEvent(data) {
       if (data.repo_url) currentRepoUrl = data.repo_url;
       currentWikiMarkdown = data.content;
       chatHistory = [];  // reset conversation when a new wiki is generated
+      closeChatPanel();
       // Final clean render (replaces the progressive streaming render)
       $('wiki-content').innerHTML = marked.parse(data.content);
       $('chat-messages').innerHTML = '';
       $('output-section').classList.remove('hidden');
+      $('chat-toggle').classList.remove('hidden');
+      // Show auto-update card with the correct webhook URL
+      $('webhook-url').textContent = window.location.origin + '/webhook';
+      $('autoupdate-card').classList.remove('hidden');
       setTimeout(() => $('output-section').scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
       break;
     }
@@ -861,6 +1033,7 @@ $('form').addEventListener('submit', e => {
   ['cartographer','historian','synthesis'].forEach(a => setAgentState(a, 'idle'));
   $('log').innerHTML = '';
   $('output-section').classList.add('hidden');
+  $('autoupdate-card').classList.add('hidden');
   $('pipeline-section').classList.remove('hidden');
   $('submit-btn').disabled = true;
   $('url-input').disabled  = true;
@@ -908,6 +1081,17 @@ $('download-btn').addEventListener('click', () => {
   a.download = `${slug}-wiki.md`;
   a.click();
   URL.revokeObjectURL(a.href);
+});
+
+// ── Webhook copy button ───────────────────────────────────────────────────────
+
+$('copy-webhook-btn').addEventListener('click', () => {
+  const url = $('webhook-url').textContent;
+  navigator.clipboard.writeText(url).then(() => {
+    const btn = $('copy-webhook-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1800);
+  });
 });
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
@@ -985,6 +1169,29 @@ async function doChat() {
 
 $('chat-btn').addEventListener('click', doChat);
 $('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') doChat(); });
+
+// ── Chat panel open / close ───────────────────────────────────────────────────
+
+function openChatPanel() {
+  $('chat-panel').classList.add('open');
+  $('chat-toggle').classList.add('panel-open');
+  document.body.classList.add('chat-open');
+  setTimeout(() => $('chat-input').focus(), 320);
+}
+
+function closeChatPanel() {
+  $('chat-panel').classList.remove('open');
+  $('chat-toggle').classList.remove('panel-open');
+  document.body.classList.remove('chat-open');
+}
+
+$('chat-toggle').addEventListener('click', openChatPanel);
+$('chat-close').addEventListener('click', closeChatPanel);
+
+// Close panel on Escape
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('chat-panel').classList.contains('open')) closeChatPanel();
+});
 </script>
 
 </body>

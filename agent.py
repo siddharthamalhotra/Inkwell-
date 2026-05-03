@@ -603,6 +603,52 @@ def search_docs(repo_url: str, query: str, limit: int = 5) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------
+# Webhook — classify whether a push event is worth regenerating for
+# ---------------------------------------------------------------------------
+
+def is_significant_push(payload: dict) -> tuple[bool, str]:
+    """Use Claude Haiku to decide if a push warrants wiki regeneration."""
+    commits = payload.get("commits", [])
+    if not commits:
+        return False, "no commits"
+
+    lines = []
+    for c in commits[:10]:
+        msg = (c.get("message") or "")[:120]
+        changed = (c.get("added") or []) + (c.get("modified") or []) + (c.get("removed") or [])
+        files = ", ".join(changed[:6])
+        lines.append(f"- {msg}" + (f" [{files}]" if files else ""))
+
+    summary = "\n".join(lines)
+    try:
+        response = client.messages.create(
+            model=AGENT_MODEL,
+            max_tokens=128,
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Decide if these commits warrant regenerating a codebase wiki.\n\n"
+                    "Regenerate if: new features, architectural changes, significant refactors, "
+                    "new modules, major bug fixes, API changes.\n"
+                    "Skip if: typo/comment fixes, README-only, dependency bumps, "
+                    "formatting/lint, test-only, CI config changes.\n\n"
+                    f"Commits:\n{summary}\n\n"
+                    'Reply with JSON only: {"significant": true/false, "reason": "one sentence"}'
+                ),
+            }],
+        )
+        text = response.content[0].text.strip()
+        if "```" in text:
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        result = json.loads(text.strip())
+        return bool(result.get("significant")), result.get("reason", "")
+    except Exception as exc:
+        return True, f"classification failed ({exc}) — regenerating to be safe"
+
+
+# ---------------------------------------------------------------------------
 # Run all three agents end-to-end
 # ---------------------------------------------------------------------------
 

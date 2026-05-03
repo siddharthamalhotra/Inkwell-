@@ -1,5 +1,8 @@
 """Inkwell web demo — Flask app with SSE progress streaming."""
+import hashlib
+import hmac as _hmac
 import json
+import os
 import queue
 import re
 import threading
@@ -10,6 +13,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import agent as ag
+
+_WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET", "")
 
 app = Flask(__name__, static_folder=".")
 
@@ -158,6 +163,49 @@ def chat():
         return jsonify(answer=answer, sources=sources)
     except Exception as exc:
         return jsonify(error=str(exc)), 500
+
+
+@app.post("/webhook")
+def webhook():
+    """GitHub push webhook — regenerates wiki when a significant commit lands."""
+    if _WEBHOOK_SECRET:
+        sig = request.headers.get("X-Hub-Signature-256", "")
+        expected = "sha256=" + _hmac.new(
+            _WEBHOOK_SECRET.encode(), request.data, hashlib.sha256
+        ).hexdigest()
+        if not _hmac.compare_digest(sig, expected):
+            return jsonify(error="invalid signature"), 401
+
+    event = request.headers.get("X-GitHub-Event", "")
+    if event == "ping":
+        return jsonify(status="ok"), 200
+    if event != "push":
+        return jsonify(status="ignored", reason=f"event={event}"), 200
+
+    payload = request.get_json(force=True) or {}
+    raw_url = (payload.get("repository") or {}).get("html_url", "")
+    repo_url = normalize_github_url(raw_url)
+    if not repo_url:
+        return jsonify(error="could not parse repo URL"), 400
+
+    significant, reason = ag.is_significant_push(payload)
+    if not significant:
+        return jsonify(status="skipped", reason=reason), 200
+
+    def _regen():
+        try:
+            wiki = ag.generate_wiki(repo_url)
+            sections = re.split(r"\n(?=## )", wiki)
+            for section in sections:
+                heading = section.split("\n", 1)[0].strip("# ").strip() or "Introduction"
+                ag.save_doc(repo_url, heading, section.strip())
+            ag.save_repo_snapshot(repo_url)
+            print(f"  webhook regen complete: {repo_url}")
+        except Exception as exc:
+            print(f"  webhook regen failed: {exc}")
+
+    threading.Thread(target=_regen, daemon=True).start()
+    return jsonify(status="regenerating", reason=reason), 202
 
 
 if __name__ == "__main__":

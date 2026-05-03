@@ -53,6 +53,7 @@ All three data sources are persisted in MongoDB, so the agent has full tool acce
 - **Download wiki** — export the full Markdown with one click
 - **Hybrid search** — MongoDB `$rankFusion` combining vector (70%) and text (30%) search
 - **Private repo support** — paste a GitHub personal access token for private repos
+- **Auto-update webhook** — GitHub push webhook regenerates the wiki automatically when a significant commit lands; Claude Haiku classifies each push to skip formatting/typo/dep-bump commits
 - **Prompt caching** — system prompts and tools are cached across agent turns to reduce latency and cost
 - **Rate limiting** — 5 generations per IP per hour
 
@@ -82,6 +83,9 @@ AWS_REGION=us-east-1          # for Amazon Titan embeddings via Bedrock
 
 # Optional — override the synthesis model (default: claude-sonnet-4-6)
 SYNTHESIS_MODEL=claude-sonnet-4-6
+
+# Optional — HMAC secret for GitHub webhook signature verification
+WEBHOOK_SECRET=your-secret-here
 ```
 
 > Without MongoDB the app still runs — wiki generation works fully, and chat falls back to in-memory keyword search over the current session's wiki. Persistent tool access and vector search require MongoDB.
@@ -93,6 +97,32 @@ python app.py
 ```
 
 Open [http://localhost:5001](http://localhost:5001).
+
+---
+
+## Auto-update webhook
+
+Inkwell can regenerate a repo's wiki automatically whenever a significant commit is pushed.
+
+### How it works
+
+When GitHub fires a `push` event, Inkwell runs a fast Claude Haiku call to classify the diff:
+
+- **Regenerates** for: new features, architectural changes, significant refactors, new modules, major bug fixes, API changes
+- **Skips** for: typo/comment fixes, README-only changes, dependency bumps, formatting/lint, test-only, CI config changes
+
+If significant, wiki generation + MongoDB snapshot run in the background. GitHub gets a `202` response immediately.
+
+### Setup
+
+1. Generate a wiki for your repo — the webhook URL appears in the setup card below the wiki
+2. Go to your repo → **Settings → Webhooks → Add webhook**
+3. Set **Payload URL** to `https://your-inkwell-domain/webhook`
+4. Set **Content type** to `application/json`
+5. Under "Which events", choose **Just the push event**
+6. Optionally generate a secret and set it in both GitHub and your `.env` as `WEBHOOK_SECRET`
+
+> Without `WEBHOOK_SECRET` set, the endpoint accepts all requests. Set it in production to verify that payloads are genuinely from GitHub.
 
 ---
 
